@@ -240,9 +240,9 @@ namespace C2Launcher
                         n.ImageUrl = Abs(Grab(card, "<img src=\"([^\"]+)\""));
                         string thumb = Grab(card, "srcset=\"([^\" ]+) 400w");
                         if (thumb != "") n.ThumbUrl = Abs(thumb);
-                        n.Console = Text(Grab(card, "<a href=\"/pt-br/consoles/[^\"]+\">([^<]+)</a>"));
+                        n.Console = ConsoleOf(card);
                         n.Summary = Text(Grab(card, "<p class=\"card-summary\">(.*?)</p>"));
-                        n.Platforms = Text(Grab(card, "<p class=\"platforms\">(.*?)</p>"));
+                        n.Platforms = PlatformsOf(card);
                         int pc;
                         n.Projects = int.TryParse(Grab(card, "<span class=\"project-count\">(\\d+)"), out pc) ? pc : 1;
                         if (!string.IsNullOrEmpty(n.Title) && !string.IsNullOrEmpty(n.Url)) all.Add(n);
@@ -502,10 +502,10 @@ namespace C2Launcher
                 n.ReleaseUrl = Grab(card, "<p class=\"release-update\"><a href=\"([^\"]+)\"");
                 n.Version = Text(Grab(card, "<p class=\"release-update\"><a[^>]*>Nova release · ([^<]+?)\\s*[↗→]?</a>"));
                 n.Date = Grab(card, "<time datetime=\"([^\"]+)\"");
-                n.Console = Text(Grab(card, "<a href=\"/pt-br/consoles/[^\"]+\">([^<]+)</a>"));
+                n.Console = ConsoleOf(card);
                 n.KindLabel = Text(Grab(card, "<span class=\"kind[^\"]*\">([^<]+)</span>"));
                 n.Summary = Text(Grab(card, "<p class=\"card-summary\">(.*?)</p>"));
-                n.Platforms = Text(Grab(card, "<p class=\"platforms\">(.*?)</p>"));
+                n.Platforms = PlatformsOf(card);
                 if (!string.IsNullOrEmpty(n.Title)) list.Add(n);
             }
             return list;
@@ -515,6 +515,17 @@ namespace C2Launcher
         static string Text(string s) { return WebUtility.HtmlDecode(Regex.Replace(s ?? "", "<[^>]+>", "")).Trim(); }
         static string Flat(string s) { return Regex.Replace(Text(s), @"\s+", " ").Trim(); }
         static string Abs(string u) { return string.IsNullOrEmpty(u) ? "" : u.StartsWith("http") ? u : Site + u; }
+
+        // Console do cartão: o link para a página do console (o site passou a pôr atributos extras na tag, como data-astro-cid-…)
+        static string ConsoleOf(string card) { return Text(Grab(card, "<a href=\"/pt-br/consoles/[^\"]+\"[^>]*>([^<]+)</a>")); }
+
+        // Plataformas do port: o atributo data-platforms do cartão ("Windows, Linux"); sem ele, o "Para" do caminho Origem → Para
+        static string PlatformsOf(string card)
+        {
+            string p = WebUtility.HtmlDecode(Grab(card, "data-platforms=\"([^\"]*)\"")).Trim();
+            if (p != "") return p;
+            return Text(Grab(card, "<span class=\"platform-label\"[^>]*>Para</span>\\s*<span[^>]*>(.*?)</span>"));
+        }
 
         // A novidade é de um jogo que já está na biblioteca?
         public static GameDef Match(NewsItem n, List<GameDef> games)
