@@ -244,7 +244,7 @@ namespace C2Launcher
                 wishChecked = true;
                 if (catalog == null) catalog = News.CatalogCached();
                 CheckWishlist();
-                if (News.CatalogStale && !catalogBusy) LoadCatalog();
+                if (News.CatalogNeedsRefresh(catalog) && !catalogBusy) LoadCatalog();
             }
         }
 
@@ -815,9 +815,9 @@ namespace C2Launcher
             }
             exploreBody.Children.Add(modes);
 
-            // Busca e consoles (os mais comuns)
+            // Linha de cima: busca, filtros (todos / Windows / Linux / jogáveis / quero jogar) e ordem
             var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 22) };
-            var box = new Grid { Width = 320, Margin = new Thickness(0, 0, 16, 0) };
+            var box = new Grid { Width = 300, Margin = new Thickness(0, 0, 16, 0), VerticalAlignment = VerticalAlignment.Center };
             var search = new TextBox { Padding = new Thickness(36, 8, 10, 8), FontSize = 14, Text = exploreQuery, Background = U.Solid(Color.FromArgb(14, 255, 255, 255)), BorderBrush = U.Solid(Color.FromArgb(22, 255, 255, 255)) };
             var ph = U.T("Buscar recomps", 14, "Dim");
             ph.Margin = new Thickness(38, 0, 0, 0); ph.VerticalAlignment = VerticalAlignment.Center; ph.IsHitTestVisible = false;
@@ -832,36 +832,8 @@ namespace C2Launcher
             }
             search.TextChanged += (s, e) => { exploreQuery = search.Text; ph.Visibility = search.Text.Length > 0 ? Visibility.Collapsed : Visibility.Visible; exploreTyping.Stop(); exploreTyping.Start(); };
             box.Children.Add(search); box.Children.Add(ph); box.Children.Add(mag);
-            box.VerticalAlignment = VerticalAlignment.Top;   // não estica quando os consoles ocupam duas linhas
             DockPanel.SetDock(box, Dock.Left);
             bar.Children.Add(box);
-            var chips = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
-            // Os consoles com mais jogos viram botões; o resto fica em "Mais consoles"
-            var all = source.Where(n => n.Windows && !string.IsNullOrEmpty(n.Console)).GroupBy(n => n.Console)
-                .OrderByDescending(gr => gr.Count()).ThenBy(gr => gr.Key).Select(gr => new KeyValuePair<string, int>(gr.Key, gr.Count())).ToList();
-            int top = exploreMode == "all" ? 9 : 7;
-            var consoles = new[] { "Todos" }.Concat(all.Take(top).Select(kv => kv.Key)).ToList();
-            var rest = all.Skip(top).ToList();
-            if (exploreConsole != "Todos" && !all.Any(kv => kv.Key == exploreConsole)) exploreConsole = "Todos";
-            if (!consoles.Contains(exploreConsole)) consoles.Add(exploreConsole);   // escolhido no "Mais consoles": aparece marcado
-            foreach (var c in consoles)
-            {
-                var cc = c;
-                var rb = new RadioButton { Style = U.S("Segment"), Content = cc, GroupName = "expc", IsChecked = cc == exploreConsole, Margin = new Thickness(0, 0, 6, 0) };
-                rb.Checked += (s, e) => { exploreConsole = cc; exploreShown = 48; RenderExploreResults(); };
-                chips.Children.Add(rb);
-            }
-            if (rest.Count > 0)
-            {
-                var more = new Button { Style = U.S("GhostButton"), Content = "Mais consoles (" + rest.Count + ")  ▾", Padding = new Thickness(12, 5, 12, 6), Margin = new Thickness(0, 0, 6, 4) };
-                more.Click += (s, e) => ShowMoreConsoles(more, rest);
-                chips.Children.Add(more);
-            }
-            bar.Children.Add(chips);
-            exploreBody.Children.Add(bar);
-
-            // Filtro (todos / jogáveis / quero jogar) e ordem
-            var row2 = new DockPanel { Margin = new Thickness(0, -8, 0, 22) };
             var sorts = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             foreach (var so in new[] { new[] { "recent", "Recentes" }, new[] { "az", "A–Z" } })
             {
@@ -871,8 +843,8 @@ namespace C2Launcher
                 sorts.Children.Add(rb);
             }
             DockPanel.SetDock(sorts, Dock.Right);
-            row2.Children.Add(sorts);
-            var filters = new StackPanel { Orientation = Orientation.Horizontal };
+            bar.Children.Add(sorts);
+            var filters = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
             int wishes = Wishlist().Count;
             var opts = new List<string[]> { new[] { "all", "Todos" }, new[] { "win", "Windows" }, new[] { "linux", "Linux" } };
             if (exploreMode == "recent") opts.Add(new[] { "playable", "Jogáveis" });
@@ -885,16 +857,45 @@ namespace C2Launcher
                 rb.Checked += (s, e) => { exploreFilter = key; exploreShown = 48; RenderExploreResults(); };
                 filters.Children.Add(rb);
             }
-            row2.Children.Add(filters);
-            exploreBody.Children.Add(row2);
+            bar.Children.Add(filters);
+            exploreBody.Children.Add(bar);
 
+            // Consoles numa lista à esquerda (todos, com quantos jogos cada um tem); os jogos à direita
+            var all = source.Where(n => n.Windows && !string.IsNullOrEmpty(n.Console)).GroupBy(n => n.Console)
+                .OrderBy(gr => gr.Key, StringComparer.CurrentCultureIgnoreCase).Select(gr => new KeyValuePair<string, int>(gr.Key, gr.Count())).ToList();
+            if (exploreConsole != "Todos" && !all.Any(kv => kv.Key == exploreConsole)) exploreConsole = "Todos";
+            var cols = new Grid();
+            cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+            cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var side = new StackPanel { Margin = new Thickness(0, 0, 24, 0) };
+            var sideTitle = U.T("CONSOLES", 12, "Dim", FontWeights.SemiBold);
+            sideTitle.Margin = new Thickness(16, 0, 0, 8);
+            side.Children.Add(sideTitle);
+            int total = source.Count(n => n.Windows);
+            foreach (var kv in new[] { new KeyValuePair<string, int>("Todos", total) }.Concat(all))
+            {
+                string cc = kv.Key;
+                var row = new DockPanel { Width = 156, LastChildFill = true };   // cabe na coluna de 220 com o espaçamento do item (16 + 16) e a margem (24)
+                var count = new TextBlock { Text = kv.Value.ToString(), FontSize = 13, FontWeight = FontWeights.Normal, Opacity = 0.55, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+                DockPanel.SetDock(count, Dock.Right);
+                row.Children.Add(count);
+                row.Children.Add(new TextBlock { Text = cc == "Todos" ? "Todos os consoles" : cc, FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+                var item = new RadioButton { Style = U.S("TabItem"), Content = row, GroupName = "expc", IsChecked = cc == exploreConsole, Margin = new Thickness(0, 0, 0, 2), FontWeight = cc == "Todos" ? FontWeights.SemiBold : FontWeights.Normal };
+                item.Checked += (s, e) => { exploreConsole = cc; exploreShown = 48; RenderExploreResults(); };
+                side.Children.Add(item);
+            }
+            cols.Children.Add(side);
+            var right = new StackPanel();
+            Grid.SetColumn(right, 1);
             exploreResults = new WrapPanel();
-            exploreBody.Children.Add(exploreResults);
+            right.Children.Add(exploreResults);
             exploreMore = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) };
-            exploreBody.Children.Add(exploreMore);
+            right.Children.Add(exploreMore);
+            cols.Children.Add(right);
+            exploreBody.Children.Add(cols);
             RenderExploreResults();
-            if (exploreMode == "recent" && (catalog.Count == 0 || News.CatalogStale) && !catalogBusy) LoadCatalog();
-            if (exploreMode == "all" && (titles.Count == 0 || News.TitlesStale) && !titlesBusy) LoadTitles();
+            if (exploreMode == "recent" && News.CatalogNeedsRefresh(catalog) && !catalogBusy) LoadCatalog();
+            if (exploreMode == "all" && News.TitlesNeedRefresh(titles) && !titlesBusy) LoadTitles();
             // Depois do catálogo do allrecomps: a lista de fora é comparada com ele
             if (exploreMode == "all" && titles.Count > 0 && News.ExtrasStale && !extrasBusy) LoadExtras();
         }
@@ -972,32 +973,6 @@ namespace C2Launcher
             root.Children.Add(overlay);
             overlay.Opacity = 0; U.Fade(overlay, 1, 140);
             box.Focus();
-        }
-
-        // Painel com os outros consoles (com quantos jogos cada um tem); rola quando não cabe
-        void ShowMoreConsoles(Button anchor, List<KeyValuePair<string, int>> rest)
-        {
-            var wrap = new WrapPanel { Margin = new Thickness(12, 12, 6, 8) };
-            var pop = new System.Windows.Controls.Primitives.Popup { PlacementTarget = anchor, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
-                StaysOpen = false, AllowsTransparency = true, VerticalOffset = 6 };
-            foreach (var kv in rest)
-            {
-                string cc = kv.Key;
-                var rb = new RadioButton { Style = U.S("Segment"), GroupName = "expc-more", IsChecked = cc == exploreConsole, Margin = new Thickness(0, 0, 6, 6) };
-                var label = new StackPanel { Orientation = Orientation.Horizontal };
-                label.Children.Add(new TextBlock { Text = cc });
-                label.Children.Add(new TextBlock { Text = "  " + kv.Value, Opacity = 0.55 });
-                rb.Content = label;
-                rb.Checked += (s, e) => { pop.IsOpen = false; exploreConsole = cc; exploreShown = 48; RenderExplore(); };
-                wrap.Children.Add(rb);
-            }
-            var card = new Border { Width = 520, Background = U.Solid((Color)ColorConverter.ConvertFromString("#1C1C1E")), BorderBrush = U.Solid((Color)ColorConverter.ConvertFromString("#333336")),
-                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Margin = new Thickness(0, 0, 24, 24),
-                Effect = new DropShadowEffect { BlurRadius = 24, ShadowDepth = 6, Opacity = 0.6 },
-                Child = new ScrollViewer { Content = wrap, MaxHeight = 380, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } };
-            System.Windows.Documents.TextElement.SetFontFamily(card, Fonts2.Hub);   // o popup não herda a fonte da janela
-            pop.Child = card;
-            pop.IsOpen = true;
         }
 
         async void LoadExtras()

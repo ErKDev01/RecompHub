@@ -43,7 +43,15 @@ namespace C2Launcher
     static class News
     {
         public const string Site = "https://allrecomps.com";
-        public static string Folder { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RecompHub", "news"); } }
+        // RECOMPHUB_CACHE: outra pasta de cache (testes e o teste diário não mexem no cache de quem usa o hub)
+        public static string Folder
+        {
+            get
+            {
+                string alt = Environment.GetEnvironmentVariable("RECOMPHUB_CACHE");
+                return !string.IsNullOrEmpty(alt) ? Path.Combine(alt, "news") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RecompHub", "news");
+            }
+        }
         static string CacheFile { get { return Path.Combine(Folder, "news.json"); } }
 
         public static DateTime LastUpdate { get { return File.Exists(CacheFile) ? File.GetLastWriteTime(CacheFile) : DateTime.MinValue; } }
@@ -146,6 +154,12 @@ namespace C2Launcher
         static DateTime catalogTried = DateTime.MinValue;
         public static string CatalogProblem;   // por que a última leitura foi recusada (null = ok)
 
+        public static bool CatalogNeedsRefresh(List<NewsItem> current)
+        {
+            if ((DateTime.Now - catalogTried).TotalMinutes <= 30) return false;
+            return current == null || current.Count == 0 || CatalogStale || CheckCatalog(current, 0) != null;
+        }
+
         public static List<NewsItem> CatalogCached()
         {
             try { if (File.Exists(CatalogFile)) return new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.Deserialize<List<NewsItem>>(File.ReadAllText(CatalogFile, Encoding.UTF8)); }
@@ -207,6 +221,14 @@ namespace C2Launcher
         public static bool TitlesStale { get { return (!File.Exists(TitlesFile) || (DateTime.Now - File.GetLastWriteTime(TitlesFile)).TotalHours > 12) && (DateTime.Now - titlesTried).TotalMinutes > 30; } }
         static DateTime titlesTried = DateTime.MinValue;
         public static string TitlesProblem;   // por que a última leitura foi recusada (null = ok)
+
+        // Precisa baixar de novo? Velho, vazio ou com cara de quebrado (gravado por uma versão que não entendia o site):
+        // nesse caso não espera as 12 h. Depois de uma tentativa, dá 30 min de intervalo
+        public static bool TitlesNeedRefresh(List<NewsItem> current)
+        {
+            if ((DateTime.Now - titlesTried).TotalMinutes <= 30) return false;
+            return current == null || current.Count == 0 || TitlesStale || CheckTitles(current, 0) != null;
+        }
 
         public static List<NewsItem> TitlesCached()
         {
