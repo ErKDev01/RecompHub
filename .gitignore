@@ -1,0 +1,6 @@
+# Gerados pelo build (o .exe vai nas Releases, não no código)
+*.exe
+dist/
+*.pdb
+*.new
+*.old
