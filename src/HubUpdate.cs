@@ -27,8 +27,12 @@ namespace C2Launcher
         public static async Task<Info> Check()
         {
             if (string.IsNullOrEmpty(Repo)) return null;
-            string json;
-            using (var wc = GitHub.Api()) json = await wc.DownloadStringTaskAsync("https://api.github.com/repos/" + Repo + "/releases/latest").ConfigureAwait(false);
+            string json = null;
+            // A API sem login aceita 60 consultas por hora; esgotada (ou fora do ar), usa a página pública de releases, sem limite
+            if (!GitHub.Limited)
+                try { using (var wc = GitHub.Api()) json = await wc.DownloadStringTaskAsync("https://api.github.com/repos/" + Repo + "/releases/latest").ConfigureAwait(false); }
+                catch (System.Net.WebException) { }
+            if (json == null) return await Task.Run(() => FromPage()).ConfigureAwait(false);
             var d = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
             object o;
             string tag = d.TryGetValue("tag_name", out o) ? Convert.ToString(o) : "";
@@ -47,6 +51,23 @@ namespace C2Launcher
                     break;
                 }
             return info;
+        }
+
+        // Pela página pública: /releases/latest redireciona para a tag; o .exe sai do endereço fixo de download
+        // (sem o hash publicado, que só a API traz; o download continua restrito ao github.com por HTTPS)
+        static Info FromPage()
+        {
+            var req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://github.com/" + Repo + "/releases/latest");
+            req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RecompHub";
+            req.Timeout = 15000;
+            string final;
+            using (var resp = req.GetResponse()) final = resp.ResponseUri.AbsoluteUri;
+            var m = System.Text.RegularExpressions.Regex.Match(final, "/releases/tag/([^/?#]+)$");
+            if (!m.Success) return null;
+            string tag = Uri.UnescapeDataString(m.Groups[1].Value);
+            Version v;
+            if (!Version.TryParse(tag.TrimStart('v', 'V'), out v) || v <= Current) return null;
+            return new Info { Tag = tag, Version = v, Url = final, AssetUrl = "https://github.com/" + Repo + "/releases/download/" + m.Groups[1].Value + "/RecompHub.exe", Digest = "" };
         }
 
         // Baixa o .exe novo ao lado do atual, confere o hash e troca os dois

@@ -119,6 +119,30 @@ namespace C2Launcher
     }
 
     // ------------------------------------------------------------------
+    // Recomps que compilam o próprio código na primeira abertura (ex.: BLACK, pela pasta compiler\ do XboxXBERecomp):
+    // a janela demora minutos para aparecer e parece travado. Depois da primeira vez ficam logs\compile.log e compiler\work
+    // ------------------------------------------------------------------
+    static class FirstCompile
+    {
+        static readonly string[] Tools = { "clang.exe", "lld-link.exe", "xbe_recomp.exe" };
+
+        public static bool Pending(GameDef g)
+        {
+            try
+            {
+                string dir = !string.IsNullOrEmpty(g.PlayExe) ? Path.GetDirectoryName(g.PlayExe) : g.Root;
+                if (string.IsNullOrEmpty(dir)) return false;
+                string compiler = Path.Combine(dir, "compiler");
+                if (!Directory.Exists(compiler) || !Tools.Any(t => File.Exists(Path.Combine(compiler, t)))) return false;
+                if (File.Exists(Path.Combine(dir, "logs", "compile.log"))) return false;
+                string work = Path.Combine(compiler, "work");
+                return !(Directory.Exists(work) && Directory.EnumerateFileSystemEntries(work).Any());
+            }
+            catch { return false; }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Jogo de disco que precisa ser extraído: ISO de Xbox 360 (ReXGlue) ou PKG de PS4
     // ------------------------------------------------------------------
     class GameDataNeed

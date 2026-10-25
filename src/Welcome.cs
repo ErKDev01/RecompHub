@@ -127,13 +127,28 @@ namespace C2Launcher
         }
 
         // ---------- Versão nova do próprio hub ----------
+        // Confere ao abrir e, com o hub aberto, a cada 3 horas (quem deixa o hub aberto por dias também fica sabendo)
+        System.Windows.Threading.DispatcherTimer hubUpdateTimer;
+        string hubUpdateShown;
+
         async void CheckHubUpdate()
         {
-            HubUpdate.Cleanup();
+            if (hubUpdateTimer == null)
+            {
+                HubUpdate.Cleanup();
+                hubUpdateTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromHours(3) };
+                hubUpdateTimer.Tick += (s, e) => CheckHubUpdate();
+                hubUpdateTimer.Start();
+            }
             HubUpdate.Info info = null;
             try { info = await HubUpdate.Check().ConfigureAwait(false); } catch { }
             if (info == null) return;
-            Dispatcher.Invoke((Action)(() => ShowHubUpdate(info)));
+            Dispatcher.Invoke((Action)(() =>
+            {
+                if (hubUpdateShown == info.Tag) return;   // o aviso dessa versão já está na tela
+                hubUpdateShown = info.Tag;
+                ShowHubUpdate(info);
+            }));
         }
 
         void ShowHubUpdate(HubUpdate.Info info)

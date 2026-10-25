@@ -45,8 +45,32 @@ namespace C2Launcher
             int ip = Array.IndexOf(args, "--play");
             // --view <home|lib|explore|stats>: abre o hub direto numa tela (testes sem clicar)
             int iv = Array.IndexOf(args, "--view");
+            // --smoke <arquivo>: passa por todas as telas e fecha sozinho; erro em qualquer uma vai para o arquivo e sai com código 3
+            //   (teste das telas, tools\check_ui.ps1; a janela abre fora da tela e sem pegar o foco)
+            int ism = Array.IndexOf(args, "--smoke");
+            string smokeLog = ism >= 0 && ism + 1 < args.Length ? args[ism + 1] : null;
+            if (smokeLog != null)
+            {
+                Action<object> fail = ex => { try { File.WriteAllText(smokeLog, Convert.ToString(ex)); } catch { } Environment.Exit(3); };
+                app.DispatcherUnhandledException += (s, e) => fail(e.Exception);
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => fail(e.ExceptionObject);
+            }
             var w = new MainWindow(ip >= 0 && ip + 1 < args.Length ? args[ip + 1] : null);
             if (iv >= 0 && iv + 1 < args.Length) { string v = args[iv + 1]; w.Loaded += (s, e) => w.ShowViewByKey(v); }
+            if (smokeLog != null)
+            {
+                w.ShowActivated = false; w.WindowStartupLocation = WindowStartupLocation.Manual; w.Left = -4000; w.Top = 0;
+                w.Loaded += async (s, e) =>
+                {
+                    foreach (var step in MainWindow.SmokeSteps)
+                    {
+                        w.SmokeStep(step);
+                        await System.Threading.Tasks.Task.Delay(3000);   // dá tempo de montar a tela e das cargas em segundo plano terminarem
+                    }
+                    try { File.WriteAllText(smokeLog, "ok"); } catch { }
+                    Environment.Exit(0);
+                };
+            }
             app.Run(w);
         }
     }
@@ -1571,6 +1595,8 @@ namespace C2Launcher
                     : "Faltam os arquivos do jogo. Escolha a ISO da sua cópia que o hub extrai para a pasta certa.";
             else if (n == "" && dataNeed != null)
                 n = "Falta a pasta do jogo (dump do PS4). Escolha os PKGs da sua cópia (jogo, atualização e DLCs) que o hub extrai.";
+            else if (n == "" && g.Installed && FirstCompile.Pending(g))
+                n = "Na primeira vez, este recomp compila o próprio código antes de abrir: leva alguns minutos e a janela pode demorar a aparecer. Das próximas vezes, abre direto.";
             else if (n == "" && g.IsCustom && g.Repo != null && prefs.GetLong(Key("play_seconds")) == 0) n = "Recomps costumam pedir os arquivos do seu jogo (ISO, ROM ou dump). Veja as instruções em Mais opções → Página do projeto.";
             filesBtn.Content = dataNeed == null ? "Escolher arquivo…" : dataNeed.Kind == "pkg" ? "Extrair PKGs…" : dataNeed.Iso != null ? "Extrair a ISO" : "Escolher a ISO…";
             filesBtn.Visibility = (filesNeed != null || dataNeed != null) && !busy ? Visibility.Visible : Visibility.Collapsed;
@@ -2243,6 +2269,7 @@ namespace C2Launcher
             {
                 try { await Task.Run(() => Saves.Create(g, "auto")); } catch { }
             }
+            bool compiling = FirstCompile.Pending(g);
             try
             {
                 string args = ((g.LaunchArgs != null ? g.LaunchArgs() : "") + " " + prefs.Get(Key("args")) + " " + extra).Trim();
@@ -2253,6 +2280,7 @@ namespace C2Launcher
             playing = true;
             var start = DateTime.Now;
             prefs.Set(Key("last_session"), start.Ticks.ToString());
+            if (compiling) win.Toast("Primeira abertura: o jogo está compilando o código dele. Pode levar alguns minutos até a janela aparecer.");
             Refresh();
             if (prefs.GetBool("close_on_launch", false)) { win.Close(); return; }
 

@@ -177,6 +177,21 @@ namespace C2Launcher
             return rb;
         }
 
+        // Roteiro do teste das telas (--smoke): cada tela principal, os painéis que abrem por cima e uma página de jogo
+        public static readonly string[] SmokeSteps = { "home", "lib", "explore", "explore-all", "github", "stats", "banner", "profile-edit", "game" };
+
+        public void SmokeStep(string step)
+        {
+            while (root.Children.Count > 0 && root.Children[root.Children.Count - 1] is Grid && ((Grid)root.Children[root.Children.Count - 1]).Background is SolidColorBrush
+                && ((SolidColorBrush)((Grid)root.Children[root.Children.Count - 1]).Background).Color.A >= 180)
+                root.Children.RemoveAt(root.Children.Count - 1);   // fecha o painel da etapa anterior (fundo escuro por cima de tudo)
+            if (step == "explore-all") { exploreMode = "all"; ShowViewByKey("explore"); RenderExplore(); }
+            else if (step == "github") ShowGitHubToken();
+            else if (step == "profile-edit") ShowProfileEditor();
+            else if (step == "game") { var g = games.FirstOrDefault(x => x.Installed) ?? games.FirstOrDefault(); if (g != null) OpenGame(g, null, null); }
+            else ShowViewByKey(step);
+        }
+
         public void ShowViewByKey(string key)
         {
             RadioButton rb;

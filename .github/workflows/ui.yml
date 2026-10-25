@@ -1,0 +1,26 @@
+# A cada envio de código: compila o hub e passa por todas as telas num perfil de mentira.
+# Se alguma tela der erro (como o hub que não abria por causa da barra de rolagem), este teste falha antes de alguém receber a versão.
+name: Teste das telas
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compilar o hub
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File build.ps1 -Out "$env:RUNNER_TEMP\RecompHub.exe"
+
+      - name: Abrir todas as telas
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File tools\check_ui.ps1 -Exe "$env:RUNNER_TEMP\RecompHub.exe"
