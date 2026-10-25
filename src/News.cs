@@ -142,7 +142,9 @@ namespace C2Launcher
         // ---------- Catálogo: todos os projetos com releases ("Atualizações", várias páginas) ----------
         static string CatalogFile { get { return Path.Combine(Folder, "catalog.json"); } }
         public static DateTime CatalogUpdate { get { return File.Exists(CatalogFile) ? File.GetLastWriteTime(CatalogFile) : DateTime.MinValue; } }
-        public static bool CatalogStale { get { return (DateTime.Now - CatalogUpdate).TotalHours > 6; } }
+        public static bool CatalogStale { get { return (DateTime.Now - CatalogUpdate).TotalHours > 6 && (DateTime.Now - catalogTried).TotalMinutes > 30; } }
+        static DateTime catalogTried = DateTime.MinValue;
+        public static string CatalogProblem;   // por que a última leitura foi recusada (null = ok)
 
         public static List<NewsItem> CatalogCached()
         {
@@ -153,6 +155,7 @@ namespace C2Launcher
 
         public static async Task<List<NewsItem>> RefreshCatalog()
         {
+            catalogTried = DateTime.Now;
             try
             {
                 // A paginação do site é feita no navegador: a primeira página já tem a lista toda
@@ -172,6 +175,8 @@ namespace C2Launcher
                     // Recém-adicionados não trazem o link da release na listagem: o repositório está na página do projeto
                     else if (n.Kind == "novo" && !string.IsNullOrEmpty(n.Url)) n.Repo = await RepoFromPage(n.Url).ConfigureAwait(false);
                 }
+                CatalogProblem = CheckCatalog(list, CatalogCached().Count);
+                if (CatalogProblem != null) return null;   // leitura com cara de quebrada: ficam as novidades de antes
                 Directory.CreateDirectory(Folder);
                 File.WriteAllText(CatalogFile, new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.Serialize(list), Encoding.UTF8);
                 return list;
@@ -198,7 +203,10 @@ namespace C2Launcher
 
         // ---------- Catálogo completo: todos os jogos, console por console ----------
         static string TitlesFile { get { return Path.Combine(Folder, "titles.json"); } }
-        public static bool TitlesStale { get { return !File.Exists(TitlesFile) || (DateTime.Now - File.GetLastWriteTime(TitlesFile)).TotalHours > 12; } }
+        // Depois de uma tentativa que falhou (rede ou leitura recusada), espera 30 min antes de baixar as ~39 páginas de novo
+        public static bool TitlesStale { get { return (!File.Exists(TitlesFile) || (DateTime.Now - File.GetLastWriteTime(TitlesFile)).TotalHours > 12) && (DateTime.Now - titlesTried).TotalMinutes > 30; } }
+        static DateTime titlesTried = DateTime.MinValue;
+        public static string TitlesProblem;   // por que a última leitura foi recusada (null = ok)
 
         public static List<NewsItem> TitlesCached()
         {
@@ -209,6 +217,7 @@ namespace C2Launcher
 
         public static async Task<List<NewsItem>> RefreshTitles()
         {
+            titlesTried = DateTime.Now;
             try
             {
                 string index = await Get(Site + "/pt-br/consoles/").ConfigureAwait(false);
@@ -230,26 +239,20 @@ namespace C2Launcher
                 foreach (var html in pagesHtml)
                 {
                     if (html == null) { partial = true; continue; }
-                    foreach (Match a in Regex.Matches(html, "<article class=\"project-card game-card\".*?</article>", RegexOptions.Singleline))
+                    foreach (string card in Articles(html, "game-card"))
                     {
-                        string card = a.Value;
-                        if (Grab(card, "data-role=\"([^\"]*)\"") != "game") continue;   // só jogos (sem demos e ferramentas)
-                        var n = new NewsItem { Kind = "title" };
-                        n.Url = Abs(Grab(card, "<a class=\"cover-link\" href=\"([^\"]+)\""));
-                        n.Title = Text(Grab(card, "<h3><a[^>]*>(.*?)</a></h3>"));
-                        n.ImageUrl = Abs(Grab(card, "<img src=\"([^\"]+)\""));
-                        string thumb = Grab(card, "srcset=\"([^\" ]+) 400w");
-                        if (thumb != "") n.ThumbUrl = Abs(thumb);
-                        n.Console = ConsoleOf(card);
-                        n.Summary = Text(Grab(card, "<p class=\"card-summary\">(.*?)</p>"));
-                        n.Platforms = PlatformsOf(card);
+                        string role = Attr(OpenTag(card, "article", "game-card"), "data-role");
+                        if (role != "" && role != "game") continue;   // só jogos (sem demos e ferramentas)
+                        var n = ParseCard(card, "title");
                         int pc;
-                        n.Projects = int.TryParse(Grab(card, "<span class=\"project-count\">(\\d+)"), out pc) ? pc : 1;
+                        n.Projects = int.TryParse(Grab(Inner(card, "span", "project-count"), "(\\d+)"), out pc) ? pc : 1;
                         if (!string.IsNullOrEmpty(n.Title) && !string.IsNullOrEmpty(n.Url)) all.Add(n);
                     }
                 }
-                if (all.Count == 0) return null;
                 var list = all.GroupBy(n => n.Url).Select(gr => gr.First()).OrderBy(n => n.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
+                // Leitura com cara de quebrada (o site mudou): fica o catálogo do último dia bom
+                TitlesProblem = CheckTitles(list, partial ? 0 : TitlesCached().Count);
+                if (TitlesProblem != null) return null;
                 Directory.CreateDirectory(Folder);
                 File.WriteAllText(TitlesFile, new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.Serialize(list), Encoding.UTF8);
                 if (partial) File.SetLastWriteTime(TitlesFile, DateTime.Now.AddHours(-23));   // faltou console: completa logo
@@ -423,24 +426,29 @@ namespace C2Launcher
             lock (pages) if (pages.TryGetValue(url, out cached)) return cached;
             string html = await Get(url).ConfigureAwait(false);
             if (html == null) return null;
-            var p = new ProjectPage { Lead = Flat(Grab(html, "<p class=\"project-lead\">(.*?)</p>")) };
-            string body = Grab(html, "<article class=\"project-details\">(.*?)</article>");
-            foreach (Match s in Regex.Matches(body, "<section id=\"[^\"]*\">\\s*<h2>(.*?)</h2>(.*?)</section>", RegexOptions.Singleline))
+            var p = new ProjectPage { Lead = Flat(Inner(html, "p", "project-lead")) };
+            // Do início dos detalhes até a barra lateral: dentro deles há <article> aninhados (multiplayer), então não dá para cortar no primeiro </article>
+            var start = Regex.Match(html, "<article\\b" + HasClass("project-details") + "[^>]*>");
+            int end = start.Success ? html.IndexOf("project-sidebar", start.Index, StringComparison.Ordinal) : -1;
+            string body = !start.Success ? "" : end > start.Index ? html.Substring(start.Index, end - start.Index) : html.Substring(start.Index);
+            foreach (Match s in Regex.Matches(body, "<section\\b[^>]*>(.*?)</section>", RegexOptions.Singleline))
             {
                 // Só os parágrafos com conteúdo: as fontes e os avisos padrão do site ficam de fora
-                var facts = Regex.Matches(s.Groups[2].Value, "<div class=\"sourced-fact\">\\s*<p>(.*?)</p>", RegexOptions.Singleline).Cast<Match>()
+                var facts = Regex.Matches(s.Groups[1].Value, "<div\\b" + HasClass("sourced-fact") + "[^>]*>\\s*<p\\b[^>]*>(.*?)</p>", RegexOptions.Singleline).Cast<Match>()
                     .Select(m => Flat(m.Groups[1].Value)).Where(t => t != "").ToArray();
-                if (facts.Length > 0) p.Sections.Add(new[] { Flat(s.Groups[1].Value), string.Join("\n\n", facts) });
+                string title = Flat(Grab(s.Groups[1].Value, "<h2\\b[^>]*>(.*?)</h2>"));
+                if (facts.Length > 0 && title != "") p.Sections.Add(new[] { title, string.Join("\n\n", facts) });
             }
-            string dl = Grab(html, "<aside class=\"project-sidebar\">.*?<dl>(.*?)</dl>");
-            foreach (Match f in Regex.Matches(dl, "<dt>(.*?)</dt>\\s*<dd>(.*?)</dd>", RegexOptions.Singleline))
+            string side = Inner(html, "aside", "project-sidebar");
+            string dl = Grab(side, "<dl\\b[^>]*>(.*?)</dl>");
+            foreach (Match f in Regex.Matches(dl, "<dt\\b[^>]*>(.*?)</dt>\\s*<dd\\b[^>]*>(.*?)</dd>", RegexOptions.Singleline))
             {
                 string label = Flat(f.Groups[1].Value);
-                string value = Flat(Regex.Replace(f.Groups[2].Value, "<a class=\"source-link\".*?</a>", "", RegexOptions.Singleline));
+                string value = Flat(Regex.Replace(f.Groups[2].Value, "<a\\b" + HasClass("source-link") + "[^>]*>.*?</a>", "", RegexOptions.Singleline));
                 if (value == "" || label == "Jogo original" || label == "Fontes consultadas") continue;
                 p.Facts.Add(new[] { label, value });
             }
-            var repo = Regex.Match(Grab(html, "<aside class=\"project-sidebar\">(.*?)</aside>"), "href=\"https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)");
+            var repo = Regex.Match(side, "href=\"https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)");
             p.Repo = repo.Success ? repo.Groups[1].Value : RepoIn(html);
             lock (pages) pages[url] = p;
             return p;
@@ -477,38 +485,70 @@ namespace C2Launcher
 
         static List<NewsItem> Section(string html, string cls, string kind)
         {
-            var sec = Regex.Match(html, "<section class=\"" + cls + "\".*?</section>", RegexOptions.Singleline);
+            var sec = Regex.Match(html, "<section\\b" + HasClass(cls) + "[^>]*>.*?</section>", RegexOptions.Singleline);
             return sec.Success ? Cards(sec.Value, kind) : new List<NewsItem>();
         }
 
+        // Cartões de projeto (os de jogo do catálogo completo, "game-card", ficam de fora)
         static List<NewsItem> Cards(string html, string kind)
         {
             var list = new List<NewsItem>();
-            foreach (Match a in Regex.Matches(html, "<article class=\"project-card\".*?</article>", RegexOptions.Singleline))
+            foreach (string card in Articles(html, "project-card"))
             {
-                string card = a.Value;
-                var n = new NewsItem { Kind = kind };
-                n.Url = Abs(Grab(card, "<a class=\"cover-link\" href=\"([^\"]+)\""));
-                n.Title = Text(Grab(card, "<h3><a[^>]*>(.*?)</a></h3>"));
-                n.Status = Text(Grab(card, "<span class=\"status[^\"]*\"><span></span>(.*?)</span>"));
-                // imagem maior do srcset (800/900 px)
-                string img = Grab(card, "<img src=\"([^\"]+)\"");
-                n.ImageUrl = Abs(img);
-                string thumb = Grab(card, "srcset=\"([^\" ]+) 400w");
-                if (thumb != "") n.ThumbUrl = Abs(thumb);
-                int w, h;
-                if (int.TryParse(Grab(card, "width=\"(\\d+)\""), out w)) n.ImageW = w;
-                if (int.TryParse(Grab(card, "height=\"(\\d+)\""), out h)) n.ImageH = h;
-                n.ReleaseUrl = Grab(card, "<p class=\"release-update\"><a href=\"([^\"]+)\"");
-                n.Version = Text(Grab(card, "<p class=\"release-update\"><a[^>]*>Nova release · ([^<]+?)\\s*[↗→]?</a>"));
-                n.Date = Grab(card, "<time datetime=\"([^\"]+)\"");
-                n.Console = ConsoleOf(card);
-                n.KindLabel = Text(Grab(card, "<span class=\"kind[^\"]*\">([^<]+)</span>"));
-                n.Summary = Text(Grab(card, "<p class=\"card-summary\">(.*?)</p>"));
-                n.Platforms = PlatformsOf(card);
+                if (OpenTag(card, "article", "game-card") != "") continue;
+                var n = ParseCard(card, kind);
                 if (!string.IsNullOrEmpty(n.Title)) list.Add(n);
             }
             return list;
+        }
+
+        // ---------- Leitura do HTML do allrecomps ----------
+        // O site muda a marcação de tempos em tempos (classes a mais, atributos novos como data-astro-cid-…, ordem diferente).
+        // Por isso: classes e atributos em qualquer ordem e, para cada campo, um segundo jeito de achar quando o primeiro falha.
+
+        static string HasClass(string cls) { return "(?=[^>]*\\bclass=\"[^\"]*(?<![\\w-])" + Regex.Escape(cls) + "(?![\\w-])[^\"]*\")"; }
+
+        // Tag de abertura do primeiro elemento <tag> com essa classe ("" se não houver)
+        static string OpenTag(string html, string tag, string cls) { return Regex.Match(html ?? "", "<" + tag + "\\b" + HasClass(cls) + "[^>]*>", RegexOptions.Singleline | RegexOptions.IgnoreCase).Value; }
+
+        // Conteúdo do primeiro elemento <tag> com essa classe (sem o mesmo tag aninhado dentro)
+        static string Inner(string html, string tag, string cls) { return Grab(html ?? "", "<" + tag + "\\b" + HasClass(cls) + "[^>]*>(.*?)</" + tag + ">"); }
+
+        static string Attr(string tag, string name) { return WebUtility.HtmlDecode(Grab(tag ?? "", "\\s" + name + "=\"([^\"]*)\"")).Trim(); }
+
+        static IEnumerable<string> Articles(string html, string cls)
+        {
+            return Regex.Matches(html ?? "", "<article\\b" + HasClass(cls) + "[^>]*>.*?</article>", RegexOptions.Singleline).Cast<Match>().Select(m => m.Value);
+        }
+
+        // Um cartão (de jogo ou de projeto) com tudo o que der para ler
+        static NewsItem ParseCard(string card, string kind)
+        {
+            var n = new NewsItem { Kind = kind };
+            string art = Regex.Match(card, "<article\\b[^>]*>").Value;
+            string cover = OpenTag(card, "a", "cover-link");
+            string img = Regex.Match(card, "<img\\b[^>]*>").Value;
+            n.Url = Abs(Attr(cover, "href"));
+            if (n.Url == "") n.Url = Abs(Grab(card, "href=\"(/[a-z-]+/(?:games|titles|projetos|jogos)/[^\"]+)\""));
+            n.Title = Text(Grab(card, "<h3\\b[^>]*>(.*?)</h3>"));
+            if (n.Title == "") n.Title = Attr(cover, "aria-label");
+            if (n.Title == "") n.Title = Attr(img, "alt");
+            n.ImageUrl = Abs(Attr(img, "src"));
+            string thumb = Grab(Attr(img, "srcset"), "([^\\s,]+)\\s+400w");
+            if (thumb != "") n.ThumbUrl = Abs(thumb);
+            int w, h;
+            if (int.TryParse(Attr(img, "width"), out w)) n.ImageW = w;
+            if (int.TryParse(Attr(img, "height"), out h)) n.ImageH = h;
+            n.Status = Text(Inner(card, "span", "status"));
+            string rel = Inner(card, "p", "release-update");
+            n.ReleaseUrl = Attr(Regex.Match(rel, "<a\\b[^>]*>").Value, "href");
+            n.Version = Text(Grab(Text(rel), "Nova release\\s*·\\s*(\\S+)"));
+            n.Date = Attr(Regex.Match(card, "<time\\b[^>]*>").Value, "datetime");
+            n.Console = ConsoleOf(card, art);
+            n.KindLabel = Text(Inner(card, "span", "kind"));
+            n.Summary = Text(Inner(card, "p", "card-summary"));
+            n.Platforms = PlatformsOf(card, art);
+            return n;
         }
 
         static string Grab(string s, string rx) { var m = Regex.Match(s, rx, RegexOptions.Singleline); return m.Success ? m.Groups[1].Value : ""; }
@@ -516,15 +556,55 @@ namespace C2Launcher
         static string Flat(string s) { return Regex.Replace(Text(s), @"\s+", " ").Trim(); }
         static string Abs(string u) { return string.IsNullOrEmpty(u) ? "" : u.StartsWith("http") ? u : Site + u; }
 
-        // Console do cartão: o link para a página do console (o site passou a pôr atributos extras na tag, como data-astro-cid-…)
-        static string ConsoleOf(string card) { return Text(Grab(card, "<a href=\"/pt-br/consoles/[^\"]+\"[^>]*>([^<]+)</a>")); }
-
-        // Plataformas do port: o atributo data-platforms do cartão ("Windows, Linux"); sem ele, o "Para" do caminho Origem → Para
-        static string PlatformsOf(string card)
+        // Console: o texto do link para a página do console; sem ele, o data-console do cartão ("playstation-2"),
+        // com o nome que outro cartão já mostrou para esse console (ou o próprio código, arrumado)
+        static readonly Dictionary<string, string> consoleNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        static string ConsoleOf(string card, string art)
         {
-            string p = WebUtility.HtmlDecode(Grab(card, "data-platforms=\"([^\"]*)\"")).Trim();
+            var m = Regex.Match(card, "<a\\b[^>]*href=\"/[a-z-]+/consoles/([^\"/]+)/?\"[^>]*>(.*?)</a>", RegexOptions.Singleline);
+            if (m.Success && Text(m.Groups[2].Value) != "")
+            {
+                string name = Text(m.Groups[2].Value);
+                lock (consoleNames) consoleNames[m.Groups[1].Value] = name;
+                return name;
+            }
+            string slug = Attr(art, "data-console");
+            if (slug == "") return "";
+            lock (consoleNames) { string known; if (consoleNames.TryGetValue(slug, out known)) return known; }
+            return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(slug.Replace('-', ' '));
+        }
+
+        // Plataformas do port: o data-platforms do cartão ("Windows, Linux"); sem ele, o "Para" do caminho Origem → Para
+        static string PlatformsOf(string card, string art)
+        {
+            string p = Attr(art, "data-platforms");
             if (p != "") return p;
-            return Text(Grab(card, "<span class=\"platform-label\"[^>]*>Para</span>\\s*<span[^>]*>(.*?)</span>"));
+            return Text(Grab(card, "platform-label\"[^>]*>\\s*Para\\s*</span>\\s*<span[^>]*>(.*?)</span>"));
+        }
+
+        // ---------- A leitura faz sentido? (senão o site mudou: melhor ficar com a de antes) ----------
+        // null = ok; senão, o motivo (também usado pelo teste diário do repositório, tools\check_site.ps1)
+        public static string CheckTitles(List<NewsItem> list, int before)
+        {
+            if (list == null || list.Count < 200) return "catálogo completo com " + (list == null ? 0 : list.Count) + " jogos (esperado: centenas)";
+            int noConsole = list.Count(n => string.IsNullOrEmpty(n.Console)), noImage = list.Count(n => string.IsNullOrEmpty(n.ImageUrl));
+            if (noConsole > list.Count / 5) return noConsole + " de " + list.Count + " jogos sem console";
+            if (noImage > list.Count / 2) return noImage + " de " + list.Count + " jogos sem capa";
+            if (before > 0 && list.Count < before / 2) return "o catálogo caiu de " + before + " para " + list.Count + " jogos";
+            return null;
+        }
+
+        public static string CheckCatalog(List<NewsItem> list, int before)
+        {
+            if (list == null || list.Count < 20) return "novidades com " + (list == null ? 0 : list.Count) + " projetos (esperado: centenas)";
+            int noConsole = list.Count(n => string.IsNullOrEmpty(n.Console));
+            int noDate = list.Count(n => n.Kind == "release" && string.IsNullOrEmpty(n.Date)), releases = list.Count(n => n.Kind == "release");
+            int noRepo = list.Count(n => n.Kind == "release" && string.IsNullOrEmpty(n.ReleaseUrl));
+            if (noConsole > list.Count / 5) return noConsole + " de " + list.Count + " projetos sem console";
+            if (releases > 0 && noDate > releases / 2) return noDate + " de " + releases + " releases sem data";
+            if (releases > 0 && noRepo > releases / 2) return noRepo + " de " + releases + " releases sem link do GitHub";
+            if (before > 0 && list.Count < before / 2) return "as novidades caíram de " + before + " para " + list.Count;
+            return null;
         }
 
         // A novidade é de um jogo que já está na biblioteca?

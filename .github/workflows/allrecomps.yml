@@ -1,0 +1,26 @@
+# Todo dia confere se o hub ainda entende o allrecomps.com (o site muda o HTML de tempos em tempos).
+# Se a leitura quebrar, este teste falha e o GitHub manda um e-mail para o dono do repositório.
+name: Teste diário do allrecomps
+
+on:
+  schedule:
+    - cron: '0 12 * * *'   # 9h no horário de Brasília
+  workflow_dispatch:        # botão "Run workflow" na aba Actions
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compilar o hub
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File build.ps1 -Out "$env:RUNNER_TEMP\RecompHub.exe"
+
+      - name: Ler o allrecomps do jeito que o hub lê
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File tools\check_site.ps1 -Exe "$env:RUNNER_TEMP\RecompHub.exe"

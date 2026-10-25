@@ -27,7 +27,7 @@ using Path = System.Windows.Shapes.Path;
 using IOPath = System.IO.Path;
 
 [assembly: AssemblyTitle("Recomp Hub")]
-[assembly: AssemblyVersion("1.0.1.0")]
+[assembly: AssemblyVersion("1.0.2.0")]
 
 namespace C2Launcher
 {
