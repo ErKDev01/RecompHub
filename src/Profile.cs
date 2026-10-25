@@ -91,15 +91,15 @@ namespace C2Launcher
             row.Children.Add(av);
             var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             txt.Children.Add(new TextBlock { Text = ProfileName, FontSize = 15, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-            txt.Children.Add(U.T("Editar perfil", 12, "Dim"));
+            txt.Children.Add(U.T("Ver perfil", 12, "Dim"));
             row.Children.Add(txt);
             var bg = new Border { Child = row, Padding = new Thickness(8, 8, 8, 8), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent };
-            var b = new Button { Style = U.S("BareButton"), Content = bg, ToolTip = "Nome e avatar" };
+            var b = new Button { Style = U.S("BareButton"), Content = bg, ToolTip = "Seu perfil" };
             b.MouseEnter += (s, e) => bg.Background = U.Solid(Color.FromArgb(14, 255, 255, 255));
             b.MouseLeave += (s, e) => bg.Background = Brushes.Transparent;
             b.GotKeyboardFocus += (s, e) => bg.Background = U.Solid(Color.FromArgb(14, 255, 255, 255));
             b.LostKeyboardFocus += (s, e) => bg.Background = Brushes.Transparent;
-            b.Click += (s, e) => ShowProfileEditor();
+            b.Click += (s, e) => ShowViewByKey("stats");   // abre o perfil (o editor fica no botão "Editar perfil" de lá)
             profileChip.Child = b;
         }
 
@@ -240,6 +240,127 @@ namespace C2Launcher
             overlay.Opacity = 0; U.Fade(overlay, 1, 160);
             paint();
             Dispatcher.BeginInvoke((Action)(() => { nameBox.Focus(); nameBox.SelectAll(); }), System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        // ---------- Banner do perfil (prefs profile_banner = "" padrão | "file" | "game:<id>"; profile_banner_blur) ----------
+        static string BannerFile { get { return System.IO.Path.Combine(HubPrefs.Folder, "banner.jpg"); } }
+
+        // A imagem do banner (null = sem imagem) e se vai desfocada
+        BitmapSource ProfileBanner(GameDef fav, out bool blur)
+        {
+            string pref = Prefs.Get("profile_banner");
+            blur = Prefs.GetBool("profile_banner_blur", pref != "file");   // imagem própria começa nítida; arte de jogo, desfocada
+            if (pref == "file" && File.Exists(BannerFile))
+            {
+                try
+                {
+                    var bi = new BitmapImage();
+                    bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.CreateOptions = BitmapCreateOptions.IgnoreImageCache; bi.UriSource = new Uri(BannerFile); bi.DecodePixelWidth = 1600; bi.EndInit(); bi.Freeze();
+                    return bi;
+                }
+                catch { }
+            }
+            var g = pref.StartsWith("game:") ? games.FirstOrDefault(x => x.Id == pref.Substring(5)) : null;
+            g = g ?? fav;
+            string p = g != null ? GameBannerArt(g) : null;
+            return p != null ? Art.Load(p, 1600) : null;
+        }
+
+        static string GameBannerArt(GameDef g) { return ArtCache.Background(g) ?? ArtCache.Fanart(g).FirstOrDefault() ?? ArtCache.Hero(g) ?? ArtCache.Cover(g); }
+
+        // Escolha do banner: uma imagem do PC, a arte de um jogo ou o padrão (jogo favorito); e desfocar ou não
+        void ShowBannerPicker()
+        {
+            var overlay = new Grid { Background = U.Solid(Color.FromArgb(205, 17, 17, 19)) };
+            var card = U.Card(null, new Thickness(0), new Thickness(30, 26, 30, 24));
+            card.Width = 680; card.HorizontalAlignment = HorizontalAlignment.Center; card.VerticalAlignment = VerticalAlignment.Center;
+            card.Effect = new DropShadowEffect { BlurRadius = 40, ShadowDepth = 10, Opacity = 0.7 };
+            Action close = () => root.Children.Remove(overlay);
+            Action<string> apply = choice =>
+            {
+                Prefs.Set("profile_banner", choice);
+                close();
+                if (statsView.Visibility == Visibility.Visible && page == null) RenderStats();
+            };
+            var sp = new StackPanel();
+            sp.Children.Add(U.T("Banner do perfil", 24, "Text", FontWeights.SemiBold));
+            var sub = U.T("A imagem que fica atrás do seu nome no perfil.", 14, "Muted");
+            sub.Margin = new Thickness(0, 4, 0, 18);
+            sp.Children.Add(sub);
+
+            var top = new WrapPanel { Margin = new Thickness(0, 0, 0, 18) };
+            var file = new Button { Style = U.S("PrimaryButton"), Content = "Escolher imagem…", Padding = new Thickness(18, 8, 18, 8), Margin = new Thickness(0, 0, 10, 0) };
+            file.Click += (s, e) =>
+            {
+                var dlg = new Microsoft.Win32.OpenFileDialog { Title = "Imagem do banner", Filter = "Imagens|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp" };
+                if (dlg.ShowDialog(this) != true) return;
+                try
+                {
+                    // Guarda uma cópia (até 1920 px de largura) na pasta do hub: a original pode sair do lugar
+                    var bi = new BitmapImage();
+                    bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.CreateOptions = BitmapCreateOptions.IgnoreImageCache; bi.UriSource = new Uri(dlg.FileName); bi.EndInit(); bi.Freeze();
+                    BitmapSource img = bi;
+                    if (bi.PixelWidth > 1920) img = new TransformedBitmap(bi, new ScaleTransform(1920.0 / bi.PixelWidth, 1920.0 / bi.PixelWidth));
+                    Directory.CreateDirectory(HubPrefs.Folder);
+                    var enc = new JpegBitmapEncoder { QualityLevel = 90 };
+                    enc.Frames.Add(BitmapFrame.Create(img));
+                    using (var fs = File.Create(BannerFile)) enc.Save(fs);
+                    if (Prefs.Get("profile_banner") != "file") Prefs.Set("profile_banner_blur", "false");
+                    apply("file");
+                    Toast("Banner trocado");
+                }
+                catch (Exception ex) { Toast("Não consegui usar essa imagem: " + ex.Message, true); }
+            };
+            top.Children.Add(file);
+            var def = new Button { Style = U.S("GhostButton"), Content = "Usar o padrão (jogo mais jogado)", Padding = new Thickness(16, 8, 16, 8) };
+            def.Click += (s, e) => { Prefs.Set("profile_banner_blur", "true"); apply(""); };
+            top.Children.Add(def);
+            sp.Children.Add(top);
+
+            // Arte dos jogos da biblioteca
+            var withArt = games.Where(g => GameBannerArt(g) != null).ToList();
+            if (withArt.Count > 0)
+            {
+                sp.Children.Add(U.T("Ou a arte de um jogo", 13, "Dim"));
+                var grid = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+                string cur = Prefs.Get("profile_banner");
+                foreach (var g in withArt)
+                {
+                    var gg = g;
+                    var art = Art.Load(GameBannerArt(g), 400);
+                    var tile = new Border { Width = 196, Height = 74, CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(cur == "game:" + g.Id ? 2 : 1),
+                        BorderBrush = cur == "game:" + g.Id ? (Brush)FindResource("Accent") : U.Solid(Color.FromArgb(30, 255, 255, 255)) };
+                    if (art != null) tile.Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Center };
+                    var cap = new Border { VerticalAlignment = VerticalAlignment.Bottom, Padding = new Thickness(8, 3, 8, 4), CornerRadius = new CornerRadius(0, 0, 6, 6), Background = U.Solid(Color.FromArgb(170, 12, 12, 13)),
+                        Child = new TextBlock { Text = g.FullName ?? g.Title, FontSize = 12, Foreground = Brushes.White, TextTrimming = TextTrimming.CharacterEllipsis } };
+                    var g2 = new Grid();
+                    g2.Children.Add(tile); g2.Children.Add(cap);
+                    var b = new Button { Style = U.S("BareButton"), Content = g2, Margin = new Thickness(0, 0, 10, 10), ToolTip = "Usar a arte de " + (g.FullName ?? g.Title) };
+                    b.Click += (s, e) => apply("game:" + gg.Id);
+                    grid.Children.Add(b);
+                }
+                sp.Children.Add(new ScrollViewer { Content = grid, MaxHeight = 280, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+            }
+
+            var bottom = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
+            var blur = new CheckBox { Style = U.S("Switch"), IsChecked = Prefs.GetBool("profile_banner_blur", Prefs.Get("profile_banner") != "file"), VerticalAlignment = VerticalAlignment.Center };
+            blur.Click += (s, e) => { Prefs.Set("profile_banner_blur", blur.IsChecked == true ? "true" : "false"); if (statsView.Visibility == Visibility.Visible && page == null) RenderStats(); };
+            var bl = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            bl.Children.Add(blur);
+            var blT = U.T("Desfocar o fundo", 14, "Text"); blT.Margin = new Thickness(10, 0, 0, 0); blT.VerticalAlignment = VerticalAlignment.Center;
+            bl.Children.Add(blT);
+            var closeB = new Button { Style = U.S("GhostButton"), Content = "Fechar", IsCancel = true };
+            closeB.Click += (s, e) => close();
+            DockPanel.SetDock(closeB, Dock.Right);
+            bottom.Children.Add(closeB);
+            bottom.Children.Add(bl);
+            sp.Children.Add(bottom);
+
+            card.Child = sp;
+            overlay.Children.Add(card);
+            overlay.MouseLeftButtonDown += (s, e) => { if (e.OriginalSource == overlay) close(); };
+            root.Children.Add(overlay);
+            overlay.Opacity = 0; U.Fade(overlay, 1, 160);
         }
 
         static BitmapSource LoadAny(string path)

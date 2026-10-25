@@ -113,5 +113,48 @@ namespace C2Launcher
             while (days.Contains(d)) { n++; d = d.AddDays(-1); }
             return n;
         }
+
+        // Maior sequência de dias seguidos com partida, em todo o histórico
+        public static int BestStreak(List<Session> all)
+        {
+            var days = all.Select(s => s.Start.Date).Distinct().OrderBy(d => d).ToList();
+            int best = 0, run = 0;
+            for (int i = 0; i < days.Count; i++)
+            {
+                run = i > 0 && (days[i] - days[i - 1]).TotalDays == 1 ? run + 1 : 1;
+                if (run > best) best = run;
+            }
+            return best;
+        }
+
+        // Segundos jogados em cada hora do relógio (0 a 23), somando o histórico todo; partidas longas entram em cada hora que ocuparam
+        public static long[] PerHour(List<Session> all)
+        {
+            var res = new long[24];
+            foreach (var s in all)
+            {
+                DateTime a = s.Start, b = s.Start.AddSeconds(s.Seconds);
+                for (DateTime h = new DateTime(a.Year, a.Month, a.Day, a.Hour, 0, 0); h < b; h = h.AddHours(1))
+                {
+                    DateTime from = a > h ? a : h, to = b < h.AddHours(1) ? b : h.AddHours(1);
+                    if (to > from) res[h.Hour] += (long)(to - from).TotalSeconds;
+                }
+            }
+            return res;
+        }
+
+        // Segundos por dia da semana (0 = segunda … 6 = domingo), somando o histórico todo
+        public static long[] PerWeekday(List<Session> all)
+        {
+            var res = new long[7];
+            var days = all.Count == 0 ? 0 : (int)(DateTime.Today - all.Min(s => s.Start.Date)).TotalDays + 1;
+            var per = PerDay(all, Math.Max(1, days));
+            for (int i = 0; i < per.Length; i++)
+            {
+                var d = DateTime.Today.AddDays(i - (per.Length - 1));
+                res[((int)d.DayOfWeek + 6) % 7] += per[i];
+            }
+            return res;
+        }
     }
 }

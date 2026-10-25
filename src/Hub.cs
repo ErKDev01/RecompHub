@@ -124,7 +124,7 @@ namespace C2Launcher
             nav.Children.Add(SideItem("home", "Início", "M4 11 L12 4 L20 11 M6.5 9 V20 H17.5 V9"));
             nav.Children.Add(SideItem("lib", "Biblioteca", "M4.5 4.5 H10.5 V10.5 H4.5 Z M13.5 4.5 H19.5 V10.5 H13.5 Z M4.5 13.5 H10.5 V19.5 H4.5 Z M13.5 13.5 H19.5 V19.5 H13.5 Z"));
             nav.Children.Add(SideItem("explore", "Explorar", "M12 3 A9 9 0 1 1 11.99 3 Z M15.5 8.5 L13.5 13.5 L8.5 15.5 L10.5 10.5 Z"));
-            nav.Children.Add(SideItem("stats", "Estatísticas", "M4 20 H20 M7 16 V11 M12 16 V6 M17 16 V9"));
+            nav.Children.Add(SideItem("stats", "Perfil", "M12 4 A4 4 0 1 1 11.99 4 Z M4.5 20.5 C5.5 16.5 8.5 14.5 12 14.5 C15.5 14.5 18.5 16.5 19.5 20.5"));   // perfil e estatísticas juntos, como na Steam
             DockPanel.SetDock(nav, Dock.Top);
             d.Children.Add(nav);
 
@@ -181,6 +181,7 @@ namespace C2Launcher
         {
             RadioButton rb;
             if (key == "profile") ShowProfileEditor();
+            else if (key == "banner") { ShowViewByKey("stats"); ShowBannerPicker(); }   // capturas sem clicar
             // "details:<nome>": abre o painel de detalhes do primeiro jogo do catálogo com esse nome (testes sem clicar)
             else if (key.StartsWith("details:"))
             {
@@ -1542,94 +1543,488 @@ namespace C2Launcher
         }
 
         // ---------- Estatísticas ----------
-        // Tempo de jogo e conquistas: números grandes no topo, depois barras (uma cor só, valores escritos ao lado)
+        // Perfil (antes "Estatísticas"), no jeito da página de perfil da Steam:
+        //   cabeçalho com avatar, nome, última partida e nível; à esquerda o jogo favorito, a atividade recente e os gráficos;
+        //   à direita insígnias, os números grandes, conquistas por jogo e espaço em disco
         void RenderStats()
         {
             statsBody.Children.Clear();
-            statsBody.Children.Add(new TextBlock { Text = "Estatísticas", FontSize = 30, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 8, 0, 20) });
-
+            var pt = CultureInfo.GetCultureInfo("pt-BR");
             var installed = games.Where(x => x.Installed).ToList();
             var time = installed.Select(g => new KeyValuePair<GameDef, long>(g, Prefs.GetLong(g.Id + ".play_seconds"))).OrderByDescending(x => x.Value).ToList();
             long total = time.Sum(x => x.Value);
-            var ach = new List<KeyValuePair<GameDef, AchievementSet>>();
+            int played = time.Count(x => x.Value > 0);
+            var ach = new Dictionary<string, AchievementSet>();
             foreach (var g in installed)
             {
                 if (g.UnlockFile == null) continue;
-                try { var a = g.LoadAchievements(); if (a != null && a.Total > 0) ach.Add(new KeyValuePair<GameDef, AchievementSet>(g, a)); } catch { }
+                try { var a = g.LoadAchievements(); if (a != null && a.Total > 0) ach[g.Id] = a; } catch { }
             }
-            int unlocked = ach.Sum(x => x.Value.UnlockedCount), possible = ach.Sum(x => x.Value.Total);
-
-            var tiles = new UniformGrid { Columns = 3, Margin = new Thickness(0, 0, 0, 34) };
-            tiles.Children.Add(StatTile("Tempo total", total > 0 ? U.Duration(total) : "—", installed.Count > 0 ? "em " + installed.Count + " jogos instalados" : ""));
-            int played = time.Count(x => x.Value > 0);
-            tiles.Children.Add(StatTile("Jogos jogados", played + " de " + installed.Count, time.Count > 0 && time[0].Value > 0 ? "mais jogado: " + (time[0].Key.FullName ?? time[0].Key.Title) : ""));
-            tiles.Children.Add(StatTile("Conquistas", possible > 0 ? unlocked + " de " + possible : "—", possible > 0 ? Pct(unlocked, possible) + " em " + ach.Count + " jogos" : ""));
-            statsBody.Children.Add(tiles);
-
-            // Atividade: horas por dia nas últimas 4 semanas (o histórico de partidas começou a ser gravado nesta versão)
+            int unlocked = ach.Values.Sum(a => a.UnlockedCount), possible = ach.Values.Sum(a => a.Total);
+            int platinas = ach.Values.Count(a => a.UnlockedCount == a.Total);
             var sessions = Sessions.All();
-            var per = Sessions.PerDay(sessions, 28);
-            int streak = Sessions.Streak(sessions);
-            long week = Sessions.PerDay(sessions, 7).Sum();
-            statsBody.Children.Add(StatsHeaderWithInfo("Atividade", sessions.Count == 0 ? "" :
-                (streak > 0 ? "Sequência: " + streak + (streak == 1 ? " dia" : " dias") + "  ·  " : "") + "Últimos 7 dias: " + (week > 0 ? U.Duration(week) : "nada")));
-            if (sessions.Count == 0)
-            {
-                var empty = U.T("O hub começou a registrar cada partida agora. O gráfico das últimas 4 semanas vai se completando conforme você joga.", 14, "Muted");
-                empty.Margin = new Thickness(0, 0, 0, 34);
-                statsBody.Children.Add(empty);
-            }
-            else statsBody.Children.Add(ActivityChart(per));
+            var perGame = sessions.GroupBy(s => s.Game).ToDictionary(gr => gr.Key, gr => gr.Count());
+            Func<GameDef, DateTime> lastOf = g => { long t = Prefs.GetLong(g.Id + ".last_session"); return t > 0 ? new DateTime(t) : DateTime.MinValue; };
+            var fav = time.Count > 0 && time[0].Value > 0 ? time[0].Key : null;
 
-            // Tempo por jogo: barras proporcionais ao mais jogado
-            statsBody.Children.Add(StatsHeader("Tempo por jogo"));
+            // ---------- Cabeçalho ----------
+            statsBody.Children.Add(ProfileHeader(fav, installed, total, unlocked, platinas, played, sessions, pt));
+
+            // ---------- Duas colunas ----------
+            var cols = new Grid();
+            cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
+            var main = new StackPanel { Margin = new Thickness(0, 0, 22, 0) };
+            var side = new StackPanel();
+            Grid.SetColumn(side, 1);
+            cols.Children.Add(main);
+            cols.Children.Add(side);
+            statsBody.Children.Add(cols);
+
+            // Jogo favorito
+            if (fav != null)
+            {
+                AchievementSet fa; ach.TryGetValue(fav.Id, out fa);
+                int fn; perGame.TryGetValue(fav.Id, out fn);
+                main.Children.Add(Section("Jogo favorito", null, FavoriteGame(fav, time[0].Value, fn, fa, lastOf(fav), pt), new Thickness(22, 18, 22, 20)));
+            }
+
+            // Atividade recente: jogos das últimas 2 semanas (ou os últimos jogados, se não houver)
+            var recentCut = DateTime.Now.AddDays(-14);
+            var recent = time.Where(x => x.Value > 0).Select(x => x.Key).OrderByDescending(lastOf).ToList();
+            var twoWeeks = recent.Where(g => lastOf(g) >= recentCut).ToList();
+            if (twoWeeks.Count == 0) twoWeeks = recent.Take(3).ToList();
+            long last14 = Sessions.PerDay(sessions, 14).Sum();
+            if (twoWeeks.Count > 0)
+            {
+                var list = new StackPanel();
+                for (int i = 0; i < twoWeeks.Count; i++)
+                {
+                    var g = twoWeeks[i];
+                    AchievementSet ga; ach.TryGetValue(g.Id, out ga);
+                    if (i > 0) list.Children.Add(Separator());
+                    list.Children.Add(RecentGame(g, Prefs.GetLong(g.Id + ".play_seconds"), lastOf(g), ga, pt));
+                }
+                main.Children.Add(Section("Atividade recente", last14 > 0 ? U.Duration(last14) + " nas últimas 2 semanas" : null, list, new Thickness(14, 10, 14, 10)));
+            }
+
+            // Mapa de atividade e quando você joga
+            if (sessions.Count > 0)
+            {
+                main.Children.Add(Section("Mapa de atividade", "Últimos 6 meses", ActivityMap(sessions, pt), new Thickness(22, 18, 22, 18)));
+                var when = new Grid();
+                when.ColumnDefinitions.Add(new ColumnDefinition());
+                when.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+                when.ColumnDefinitions.Add(new ColumnDefinition());
+                when.Children.Add(WeekdayChart(Sessions.PerWeekday(sessions)));
+                var dp = DayPartChart(Sessions.PerHour(sessions));
+                Grid.SetColumn(dp, 2);
+                when.Children.Add(dp);
+                main.Children.Add(Section("Quando você joga", null, when, new Thickness(22, 18, 22, 14)));
+            }
+
+            // Todos os jogos: tempo de cada um
+            var rows = new StackPanel();
             long max = time.Count > 0 ? Math.Max(1, time[0].Value) : 1;
             foreach (var x in time.Where(x => x.Value > 0))
-                statsBody.Children.Add(StatRow(x.Key, Bar(x.Value, max, false), U.Duration(x.Value),
-                    (x.Key.FullName ?? x.Key.Title) + ": " + U.Duration(x.Value) + "  ·  " + Pct(x.Value, Math.Max(1, total)) + " do total  ·  jogado " + Lower(U.Ago(new DateTime(Prefs.GetLong(x.Key.Id + ".last_session"))))));
+            {
+                int n; perGame.TryGetValue(x.Key.Id, out n);
+                var lt = lastOf(x.Key);
+                string sub = (n > 0 ? n + (n == 1 ? " partida" : " partidas") + "  ·  " : "") + (lt > DateTime.MinValue ? "jogado " + Lower(U.Ago(lt)) : "");
+                rows.Children.Add(StatRow(x.Key, sub, Bar(x.Value, max, false), U.Duration(x.Value), Pct(x.Value, Math.Max(1, total)),
+                    (x.Key.FullName ?? x.Key.Title) + ": " + U.Duration(x.Value) + "  ·  " + Pct(x.Value, Math.Max(1, total)) + " do total"));
+            }
+            if (played == 0) { var e0 = U.T("Nenhuma partida ainda. O tempo conta quando você joga pelo hub.", 14, "Muted"); e0.Margin = new Thickness(12, 8, 0, 8); rows.Children.Add(e0); }
             var never = time.Where(x => x.Value == 0).Select(x => x.Key.FullName ?? x.Key.Title).ToList();
-            if (played == 0) statsBody.Children.Add(U.T("Nenhuma sessão registrada ainda. O tempo conta quando você joga pelo hub.", 14, "Muted"));
             if (never.Count > 0 && played > 0)
             {
                 var nv = U.T("Ainda não jogados: " + string.Join(", ", never.ToArray()), 13, "Dim");
-                nv.Margin = new Thickness(0, 8, 0, 0);
-                statsBody.Children.Add(nv);
+                nv.Margin = new Thickness(12, 10, 0, 4); nv.TextWrapping = TextWrapping.Wrap;
+                rows.Children.Add(nv);
             }
+            main.Children.Add(Section("Todos os jogos", total > 0 ? "Total: " + U.Duration(total) : null, rows, new Thickness(10, 8, 10, 8)));
 
-            // Conquistas: progresso de cada jogo (trilho + preenchimento)
+            // ---------- Lateral ----------
+            side.Children.Add(BadgesPanel(sessions, total, installed, played, unlocked, platinas));
+            side.Children.Add(Numbers(new[]
+            {
+                new[] { "Jogos", installed.Count.ToString() },
+                new[] { "Horas de jogo", (total / 3600.0).ToString("0.#", pt) },
+                new[] { "Partidas", sessions.Count.ToString() },
+                new[] { "Conquistas", unlocked.ToString() },
+                new[] { "Jogos 100%", platinas.ToString() },
+                new[] { "Recorde de sequência", Sessions.BestStreak(sessions) + (Sessions.BestStreak(sessions) == 1 ? " dia" : " dias") }
+            }));
             if (ach.Count > 0)
             {
-                var h = StatsHeader("Conquistas e troféus");
-                h.Margin = new Thickness(0, 36, 0, 12);
-                statsBody.Children.Add(h);
-                foreach (var x in ach.OrderByDescending(x => (double)x.Value.UnlockedCount / x.Value.Total))
-                {
-                    var a = x.Value;
-                    string extra = a.MaxScore > 0 ? "  ·  " + a.Score + " de " + a.MaxScore + " G" : "";
-                    statsBody.Children.Add(StatRow(x.Key, Bar(a.UnlockedCount, a.Total, true), a.UnlockedCount + " de " + a.Total + "  ·  " + Pct(a.UnlockedCount, a.Total),
-                        (x.Key.FullName ?? x.Key.Title) + ": " + a.UnlockedCount + " de " + a.Total + " " + a.Noun.ToLowerInvariant() + extra));
-                }
+                var al = new StackPanel();
+                foreach (var g in installed.Where(g => ach.ContainsKey(g.Id)).OrderByDescending(g => (double)ach[g.Id].UnlockedCount / ach[g.Id].Total))
+                    al.Children.Add(MiniProgress(g, ach[g.Id].UnlockedCount + " / " + ach[g.Id].Total, ach[g.Id].UnlockedCount, ach[g.Id].Total));
+                side.Children.Add(Section("Conquistas", Pct(unlocked, possible) + " de tudo", al, new Thickness(16, 12, 16, 6)));
             }
-
-            // Espaço em disco: tamanho da pasta de cada jogo (calculado em segundo plano, guardado por 24 h)
             var disk = installed.Select(g => new KeyValuePair<GameDef, long>(g, Sessions.CachedSize(g, Prefs))).ToList();
             var known = disk.Where(x => x.Value >= 0).OrderByDescending(x => x.Value).ToList();
             int pending = disk.Count(x => x.Value < 0);
+            var dl = new StackPanel();
+            long dsum = Math.Max(1, known.Sum(x => x.Value));
+            foreach (var x in known) dl.Children.Add(MiniProgress(x.Key, Sessions.Size(x.Value), x.Value, dsum));
             string free = "";
             try { var dr = new DriveInfo(System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(Prefs.LibraryRoot))); free = Sessions.Size(dr.AvailableFreeSpace) + " livres no " + dr.Name.TrimEnd('\\'); } catch { }
-            var dh = StatsHeaderWithInfo("Espaço em disco", (known.Count > 0 ? "Total: " + Sessions.Size(known.Sum(x => x.Value)) + (free != "" ? "  ·  " : "") : "") + free);
-            dh.Margin = new Thickness(0, 36, 0, 12);
-            statsBody.Children.Add(dh);
-            long dmax = known.Count > 0 ? Math.Max(1, known[0].Value) : 1;
-            foreach (var x in known)
-                statsBody.Children.Add(StatRow(x.Key, Bar(x.Value, dmax, false), Sessions.Size(x.Value), (x.Key.FullName ?? x.Key.Title) + ": " + Sessions.Size(x.Value) + "  ·  " + Sessions.GameFolder(x.Key, Prefs.LibraryRoot)));
+            if (free != "") { var fr = Note(free); fr.Margin = new Thickness(0, 2, 0, 8); dl.Children.Add(fr); }
             if (pending > 0)
             {
-                var calc = U.T("Calculando o tamanho de " + pending + (pending == 1 ? " jogo…" : " jogos…"), 13, "Dim");
-                calc.Margin = new Thickness(0, 8, 0, 0);
-                statsBody.Children.Add(calc);
+                dl.Children.Add(Note("Calculando " + pending + (pending == 1 ? " jogo…" : " jogos…")));
                 MeasureDisk(disk.Where(x => x.Value < 0).Select(x => x.Key).ToList());
             }
+            side.Children.Add(Section("Espaço em disco", known.Count > 0 ? Sessions.Size(known.Sum(x => x.Value)) : null, dl, new Thickness(16, 12, 16, 8)));
+        }
+
+        // XP do perfil: 10 por hora jogada, 25 por conquista, 50 por jogo jogado e 200 por jogo com tudo desbloqueado
+        // Nível n pede 100·n·(n+1)/2 de XP acumulado (100, 300, 600, 1000…)
+        static long ProfileXp(long seconds, int unlocked, int played, int platinas) { return seconds / 360 + 25L * unlocked + 50L * played + 200L * platinas; }
+        static int LevelOf(long xp) { int n = 0; while (100L * (n + 1) * (n + 2) / 2 <= xp) n++; return n; }
+        static long XpFor(int level) { return 100L * level * (level + 1) / 2; }
+
+        FrameworkElement ProfileHeader(GameDef fav, List<GameDef> installed, long total, int unlocked, int platinas, int played, List<Session> sessions, CultureInfo pt)
+        {
+            var host = new Grid { Height = 220, Margin = new Thickness(0, 4, 0, 24), ClipToBounds = true };
+            var bg = new Border { CornerRadius = new CornerRadius(12), Background = U.Solid(Color.FromArgb(11, 255, 255, 255)) };
+            // Banner: a imagem escolhida pela pessoa, a arte de um jogo ou (padrão) a do jogo favorito; desfocado ou nítido
+            bool blur;
+            var src = ProfileBanner(fav, out blur);
+            if (src != null)
+                bg.Background = blur ? new ImageBrush(Art.Blurred(src, 1280, 360)) { Stretch = Stretch.UniformToFill, Opacity = 0.55 }
+                    : new ImageBrush(src) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Center, Opacity = 0.9 };
+            host.Children.Add(bg);
+            // Escurece as bordas (à esquerda o avatar e o nome, à direita o nível) e deixa a imagem aparecer no meio;
+            // nítida, a imagem pede um pouco mais de sombra nas bordas para o texto pequeno continuar legível
+            var pc = ((SolidColorBrush)FindResource("Bg")).Color;
+            var scrim = new LinearGradientBrush { StartPoint = new Point(0, 0.5), EndPoint = new Point(1, 0.5) };
+            scrim.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(blur ? 235 : 225), pc.R, pc.G, pc.B), 0));
+            scrim.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(blur ? 150 : 165), pc.R, pc.G, pc.B), 0.45));
+            scrim.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(blur ? 110 : 40), pc.R, pc.G, pc.B), 0.62));
+            scrim.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(blur ? 170 : 200), pc.R, pc.G, pc.B), 1));
+            host.Children.Add(new Border { CornerRadius = new CornerRadius(12), IsHitTestVisible = false, Background = scrim });
+            host.Children.Add(new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), BorderBrush = U.Solid(Color.FromArgb(20, 255, 255, 255)), IsHitTestVisible = false });
+
+            var row = new DockPanel { Margin = new Thickness(32, 0, 32, 0), VerticalAlignment = VerticalAlignment.Center };
+            var av = Avatar(132);
+            av.Margin = new Thickness(0, 0, 28, 0);
+            DockPanel.SetDock(av, Dock.Left);
+            row.Children.Add(av);
+
+            // Nível e XP, à direita
+            long xp = ProfileXp(total, unlocked, played, platinas);
+            int lv = LevelOf(xp);
+            long from = XpFor(lv), to = XpFor(lv + 1);
+            var right = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Width = 260 };
+            var lvRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            lvRow.Children.Add(new TextBlock { Text = "Nível", FontSize = 24, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
+            var ring = new Grid { Width = 44, Height = 44 };
+            var circle = new Ellipse { StrokeThickness = 2.5 };
+            circle.SetResourceReference(Shape.StrokeProperty, "Accent");
+            ring.Children.Add(circle);
+            ring.Children.Add(new TextBlock { Text = lv.ToString(), FontSize = 18, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
+            lvRow.Children.Add(ring);
+            right.Children.Add(lvRow);
+            var xpBar = (Grid)Bar(xp - from, Math.Max(1, to - from), true);
+            xpBar.Height = 6; xpBar.Margin = new Thickness(0, 14, 0, 6);
+            right.Children.Add(xpBar);
+            var xpT = Note(xp.ToString("N0", pt) + " XP  ·  faltam " + (to - xp).ToString("N0", pt) + " para o nível " + (lv + 1));
+            xpT.HorizontalAlignment = HorizontalAlignment.Right;
+            if (!blur) xpT.SetResourceReference(TextBlock.ForegroundProperty, "Muted");
+            right.Children.Add(xpT);
+            right.ToolTip = "XP: 10 por hora jogada, 25 por conquista, 50 por jogo jogado e 200 por jogo com tudo desbloqueado";
+            var btns = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
+            var banner = new Button { Style = U.S("GhostButton"), Content = "Alterar banner", Padding = new Thickness(14, 7, 14, 7), Margin = new Thickness(0, 0, 8, 0) };
+            banner.Click += (s, e) => ShowBannerPicker();
+            btns.Children.Add(banner);
+            var edit = new Button { Style = U.S("GhostButton"), Content = "Editar perfil", Padding = new Thickness(14, 7, 14, 7) };
+            edit.Click += (s, e) => ShowProfileEditor();
+            btns.Children.Add(edit);
+            right.Children.Add(btns);
+            DockPanel.SetDock(right, Dock.Right);
+            row.Children.Add(right);
+
+            // Nome e situação
+            var who = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            who.Children.Add(new TextBlock { Text = ProfileName, FontSize = 34, FontWeight = FontWeights.Bold, TextTrimming = TextTrimming.CharacterEllipsis });
+            var lastS = sessions.OrderByDescending(s => s.Start).FirstOrDefault();
+            var lastG = lastS != null ? games.FirstOrDefault(g => g.Id == lastS.Game) : null;
+            var status = new TextBlock { FontSize = 15, Margin = new Thickness(0, 4, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis };
+            if (lastG != null)
+            {
+                var dot = new System.Windows.Documents.Run("●  ");
+                dot.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty, (DateTime.Now - lastS.Start).TotalDays < 1 ? "Ok" : "Dim");
+                status.Inlines.Add(dot);
+                var txt = new System.Windows.Documents.Run("Jogou " + (lastG.FullName ?? lastG.Title) + " " + Lower(U.Ago(lastS.Start.AddSeconds(lastS.Seconds))));
+                txt.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty, "Muted");
+                status.Inlines.Add(txt);
+            }
+            else { status.Text = "Ainda sem partidas pelo hub"; status.SetResourceReference(TextBlock.ForegroundProperty, "Muted"); }
+            who.Children.Add(status);
+            var since = Note(sessions.Count > 0 ? "No Recomp Hub desde " + sessions.Min(s => s.Start).ToString("MMMM 'de' yyyy", pt) + "  ·  perfil local, só neste PC" : "Perfil local, só neste PC");
+            since.Margin = new Thickness(0, 10, 0, 0);
+            if (!blur) since.SetResourceReference(TextBlock.ForegroundProperty, "Muted");   // sobre imagem nítida, o cinza mais escuro some
+            who.Children.Add(since);
+            row.Children.Add(who);
+            host.Children.Add(row);
+            return host;
+        }
+
+        // Seção com faixa de título (degradê da cor de destaque), como as da página de perfil da Steam
+        Border Section(string title, string info, UIElement body, Thickness pad)
+        {
+            var ac = ((SolidColorBrush)FindResource("Accent")).Color;
+            var bar = new DockPanel();
+            if (!string.IsNullOrEmpty(info))
+            {
+                var r = U.T(info, 13, "Muted");
+                r.VerticalAlignment = VerticalAlignment.Center; r.TextWrapping = TextWrapping.NoWrap;
+                DockPanel.SetDock(r, Dock.Right);
+                bar.Children.Add(r);
+            }
+            bar.Children.Add(new TextBlock { Text = title, FontSize = 16, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            var band = new Border { Child = bar, Padding = new Thickness(18, 10, 18, 10), CornerRadius = new CornerRadius(10, 10, 0, 0),
+                Background = new LinearGradientBrush(Color.FromArgb(46, ac.R, ac.G, ac.B), Color.FromArgb(6, ac.R, ac.G, ac.B), 0) };
+            var sp = new StackPanel();
+            sp.Children.Add(band);
+            sp.Children.Add(new Border { Child = body, Padding = pad });
+            return StatCard(sp, new Thickness(0), new Thickness(0, 0, 0, 22));
+        }
+
+        static FrameworkElement Separator()
+        {
+            var s = new Border { Height = 1, Margin = new Thickness(8, 6, 8, 6) };
+            s.SetResourceReference(Border.BackgroundProperty, "Line");
+            return s;
+        }
+
+        // Banner largo do jogo: o fundo oficial (ou a capa) com o logo por cima, quando houver
+        FrameworkElement Banner(GameDef g, double w, double h)
+        {
+            var grid = new Grid { Width = w, Height = h, ClipToBounds = true };
+            var b = new Border { CornerRadius = new CornerRadius(6), Background = U.Solid(Color.FromArgb(18, 255, 255, 255)) };
+            string p = ArtCache.Background(g) ?? ArtCache.Cover(g);
+            var src = p != null ? Art.Load(p, (int)(w * 2)) : null;
+            if (src != null) b.Background = new ImageBrush(src) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Center };   // capa centralizada: o topo da caixa costuma ser a faixa do console
+            grid.Children.Add(b);
+            string lp = ArtCache.Logo(g);
+            var logo = lp != null ? Art.Load(lp, (int)(w * 1.5)) : null;
+            if (logo != null && ArtCache.Background(g) != null)
+            {
+                grid.Children.Add(new Border { CornerRadius = new CornerRadius(6), Background = U.Solid(Color.FromArgb(70, 0, 0, 0)) });
+                grid.Children.Add(new Image { Source = logo, Stretch = Stretch.Uniform, Margin = new Thickness(w * 0.12, h * 0.14, w * 0.12, h * 0.14) });
+            }
+            return grid;
+        }
+
+        // Ícone da conquista (PNG que vem no arquivo do jogo); null se o jogo não traz ícone
+        static readonly Dictionary<Achievement, BitmapSource> achIcons = new Dictionary<Achievement, BitmapSource>();
+        static BitmapSource AchIcon(Achievement a)
+        {
+            if (a.Icon == null || a.Icon.Length == 0) return null;
+            BitmapSource bmp;
+            if (achIcons.TryGetValue(a, out bmp)) return bmp;
+            try
+            {
+                var bi = new BitmapImage();
+                using (var ms = new MemoryStream(a.Icon)) { bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.StreamSource = ms; bi.DecodePixelWidth = 80; bi.EndInit(); }
+                bi.Freeze();
+                bmp = bi;
+            }
+            catch { bmp = null; }
+            achIcons[a] = bmp;
+            return bmp;
+        }
+
+        // "46 / 49 conquistas", a barra e os ícones das últimas desbloqueadas (+N)
+        FrameworkElement AchievementStrip(AchievementSet a, int icons, CultureInfo pt)
+        {
+            var sp = new StackPanel();
+            var line = new DockPanel();
+            var cnt = U.T(a.UnlockedCount + " / " + a.Total + " " + a.Noun.ToLowerInvariant(), 13, "Text", FontWeights.Medium);
+            line.Children.Add(cnt);
+            sp.Children.Add(line);
+            var bar = (Grid)Bar(a.UnlockedCount, a.Total, true);
+            bar.Height = 6; bar.Margin = new Thickness(0, 6, 0, 10);
+            sp.Children.Add(bar);
+            var got = a.Items.Where(x => x.Unlocked).OrderByDescending(x => x.UnlockedAt).ToList();
+            var strip = new StackPanel { Orientation = Orientation.Horizontal };
+            foreach (var x in got.Take(icons))
+            {
+                var ic = AchIcon(x);
+                var tile = new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(5), Margin = new Thickness(0, 0, 6, 0),
+                    ToolTip = (string.IsNullOrEmpty(x.Label) ? a.Singular : x.Label) + (x.UnlockedAt.HasValue ? "  ·  " + x.UnlockedAt.Value.ToString("d 'de' MMM", pt) : "") + (string.IsNullOrEmpty(x.Description) ? "" : "\n" + x.Description) };
+                if (ic != null) tile.Background = new ImageBrush(ic) { Stretch = Stretch.UniformToFill };
+                else { tile.Background = U.Solid(Color.FromArgb(26, 255, 255, 255)); tile.Child = new TextBlock { Text = "★", FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)FindResource("Muted") }; }
+                strip.Children.Add(tile);
+            }
+            if (got.Count > icons)
+                strip.Children.Add(new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(5), Background = U.Solid(Color.FromArgb(26, 255, 255, 255)),
+                    Child = new TextBlock { Text = "+" + (got.Count - icons), FontSize = 13, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
+            if (got.Count > 0) sp.Children.Add(strip);
+            return sp;
+        }
+
+        FrameworkElement FavoriteGame(GameDef g, long secs, int partidas, AchievementSet a, DateTime last, CultureInfo pt)
+        {
+            var sp = new StackPanel();
+            var top = new DockPanel { Margin = new Thickness(0, 0, 0, 18) };
+            var ban = Banner(g, 260, 98);
+            DockPanel.SetDock(ban, Dock.Left);
+            top.Children.Add(ban);
+            var info = new StackPanel { Margin = new Thickness(22, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            info.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 22, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+            info.Children.Add(Note(g.Platform + (last > DateTime.MinValue ? "  ·  jogado pela última vez em " + last.ToString("d 'de' MMM", pt) : "")));
+            top.Children.Add(info);
+            sp.Children.Add(top);
+            var nums = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, a != null ? 18 : 0) };
+            Action<string, string> big = (v, k) =>
+            {
+                var c = new StackPanel { Margin = new Thickness(0, 0, 48, 0) };
+                c.Children.Add(new TextBlock { Text = v, FontSize = 34, FontWeight = FontWeights.Light });
+                c.Children.Add(U.T(k, 14, "Muted"));
+                nums.Children.Add(c);
+            };
+            big((secs / 3600.0).ToString(secs >= 36000 ? "0" : "0.#", pt), "Horas de jogo");
+            if (a != null) big(a.UnlockedCount.ToString(), a.Noun);
+            if (partidas > 0) big(partidas.ToString(), "Partidas");
+            sp.Children.Add(nums);
+            if (a != null)
+            {
+                var ach = new Grid();
+                ach.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                ach.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(20) });
+                ach.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
+                // Conquista mais recente
+                var lastA = a.Items.Where(x => x.Unlocked).OrderByDescending(x => x.UnlockedAt).FirstOrDefault();
+                if (lastA != null)
+                {
+                    var r = new DockPanel();
+                    var ic = AchIcon(lastA);
+                    var tile = new Border { Width = 46, Height = 46, CornerRadius = new CornerRadius(5), Margin = new Thickness(0, 0, 14, 0) };
+                    if (ic != null) tile.Background = new ImageBrush(ic) { Stretch = Stretch.UniformToFill }; else tile.Background = U.Solid(Color.FromArgb(26, 255, 255, 255));
+                    DockPanel.SetDock(tile, Dock.Left);
+                    r.Children.Add(tile);
+                    var t = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+                    t.Children.Add(U.T("Mais recente", 11, "Dim"));
+                    t.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(lastA.Label) ? a.Singular : lastA.Label, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+                    t.Children.Add(Note((lastA.Gamerscore > 0 ? lastA.Gamerscore + " G  ·  " : "") + (lastA.UnlockedAt.HasValue ? lastA.UnlockedAt.Value.ToString("d 'de' MMM", pt) : "")));
+                    r.Children.Add(t);
+                    ach.Children.Add(new Border { Child = r, Padding = new Thickness(12), CornerRadius = new CornerRadius(8), Background = U.Solid(Color.FromArgb(16, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Top });
+                }
+                var strip = AchievementStrip(a, 6, pt);
+                Grid.SetColumn(strip, 2);
+                ach.Children.Add(strip);
+                sp.Children.Add(ach);
+            }
+            var b = new Button { Style = U.S("BareButton"), Content = sp, ToolTip = "Abrir " + (g.FullName ?? g.Title), HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            b.Click += (s, e) => OpenGame(g, null, null);
+            return b;
+        }
+
+        FrameworkElement RecentGame(GameDef g, long secs, DateTime last, AchievementSet a, CultureInfo pt)
+        {
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+            row.ColumnDefinitions.Add(new ColumnDefinition());
+            var ban = Banner(g, 220, 82);
+            ban.VerticalAlignment = VerticalAlignment.Top;
+            row.Children.Add(ban);
+            var right = new StackPanel { Margin = new Thickness(18, 2, 4, 0) };
+            Grid.SetColumn(right, 1);
+            var head = new DockPanel();
+            var when = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
+            var h1 = U.T(U.Duration(secs) + " registradas", 13, "Muted"); h1.HorizontalAlignment = HorizontalAlignment.Right;
+            when.Children.Add(h1);
+            if (last > DateTime.MinValue) { var h2 = U.T("jogado pela última vez em " + last.ToString("d 'de' MMM", pt), 13, "Dim"); h2.HorizontalAlignment = HorizontalAlignment.Right; when.Children.Add(h2); }
+            DockPanel.SetDock(when, Dock.Right);
+            head.Children.Add(when);
+            head.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 17, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 0, 12, 0) });
+            right.Children.Add(head);
+            if (a != null) { var st = AchievementStrip(a, 5, pt); st.Margin = new Thickness(0, 12, 0, 0); right.Children.Add(st); }
+            row.Children.Add(right);
+            var bg = new Border { Child = row, Padding = new Thickness(8), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent };
+            var b = new Button { Style = U.S("BareButton"), Content = bg, ToolTip = "Abrir " + (g.FullName ?? g.Title), HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            b.MouseEnter += (s, e) => bg.Background = U.Solid(Color.FromArgb(12, 255, 255, 255));
+            b.MouseLeave += (s, e) => bg.Background = Brushes.Transparent;
+            b.Click += (s, e) => OpenGame(g, null, null);
+            return b;
+        }
+
+        // Insígnias: marcos do hub; as que faltam aparecem apagadas, com a dica de como conseguir
+        FrameworkElement BadgesPanel(List<Session> sessions, long total, List<GameDef> installed, int played, int unlocked, int platinas)
+        {
+            var hours = Sessions.PerHour(sessions);
+            long night = Enumerable.Range(0, 6).Sum(h => hours[h]), allH = Math.Max(1, hours.Sum());
+            int consoles = installed.Where(g => Prefs.GetLong(g.Id + ".play_seconds") > 0).Select(g => g.Platform).Distinct().Count();
+            var list = new List<object[]>   // glifo (Segoe MDL2), nome, como conseguir, conquistada
+            {
+                new object[] { "", "Primeira partida", "Jogue pelo hub pela primeira vez", sessions.Count > 0 },
+                new object[] { "", "10 horas", "Some 10 horas de jogo", total >= 36000 },
+                new object[] { "", "Maratona", "Jogue 2 horas seguidas numa partida", sessions.Any(s => s.Seconds >= 7200) },
+                new object[] { "", "Caçador de conquistas", "Desbloqueie 50 conquistas", unlocked >= 50 },
+                new object[] { "", "Platina", "Desbloqueie tudo de um jogo", platinas > 0 },
+                new object[] { "", "Colecionador", "Tenha 5 jogos na biblioteca", installed.Count >= 5 },
+                new object[] { "", "Viajante", "Jogue em 3 consoles diferentes", consoles >= 3 },
+                new object[] { "", "Fiel", "Jogue 7 dias seguidos", Sessions.BestStreak(sessions) >= 7 },
+                new object[] { "", "Coruja", "Passe um quinto do tempo jogando de madrugada", night * 5 >= allH && sessions.Count > 0 },
+                new object[] { "", "100 horas", "Some 100 horas de jogo", total >= 360000 },
+            };
+            int got = list.Count(x => (bool)x[3]);
+            var wrap = new WrapPanel();
+            foreach (var x in list.OrderByDescending(x => (bool)x[3]))
+            {
+                bool on = (bool)x[3];
+                var icon = new TextBlock { Text = (string)x[0], FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 20, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                icon.SetResourceReference(TextBlock.ForegroundProperty, on ? "OnAccent" : "Muted");
+                var tile = new Border { Width = 46, Height = 46, CornerRadius = new CornerRadius(10), Margin = new Thickness(0, 0, 9, 9), Child = icon, Opacity = on ? 1 : 0.35,
+                    ToolTip = (string)x[1] + (on ? "  ✓" : "") + "\n" + (string)x[2] };
+                if (on) tile.SetResourceReference(Border.BackgroundProperty, "Accent"); else tile.Background = U.Solid(Color.FromArgb(26, 255, 255, 255));
+                wrap.Children.Add(tile);
+            }
+            return Section("Insígnias", got + " de " + list.Count, wrap, new Thickness(16, 14, 7, 6));
+        }
+
+        // Números grandes à direita (como "Jogos 390" na Steam)
+        FrameworkElement Numbers(string[][] items)
+        {
+            var sp = new StackPanel();
+            foreach (var it in items)
+            {
+                var d = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+                var v = new TextBlock { Text = it[1], FontSize = 22, FontWeight = FontWeights.Light, VerticalAlignment = VerticalAlignment.Center };
+                DockPanel.SetDock(v, Dock.Right);
+                d.Children.Add(v);
+                d.Children.Add(U.T(it[0], 14, "Muted"));
+                ((TextBlock)d.Children[1]).VerticalAlignment = VerticalAlignment.Center;
+                sp.Children.Add(d);
+            }
+            return Section("Em números", null, sp, new Thickness(18, 14, 18, 8));
+        }
+
+        // Linha compacta da lateral: capa pequena, nome, valor e barra fina
+        FrameworkElement MiniProgress(GameDef g, string value, long part, long whole)
+        {
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 12), Background = Brushes.Transparent, ToolTip = g.FullName ?? g.Title };
+            var th = Thumb(g);
+            if (th != null)
+            {
+                var img = new Border { Width = 30, Height = 30, CornerRadius = new CornerRadius(5), Margin = new Thickness(0, 0, 10, 0), Background = new ImageBrush(th) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top } };
+                DockPanel.SetDock(img, Dock.Left);
+                row.Children.Add(img);
+            }
+            var col = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            var top = new DockPanel();
+            var v = U.T(value, 12, "Muted"); DockPanel.SetDock(v, Dock.Right); top.Children.Add(v);
+            top.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 13, FontWeight = FontWeights.Medium, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 0, 8, 0) });
+            col.Children.Add(top);
+            var bar = (Grid)Bar(part, Math.Max(1, whole), true);
+            bar.Height = 4; bar.Margin = new Thickness(0, 5, 0, 0);
+            col.Children.Add(bar);
+            row.Children.Add(col);
+            return row;
         }
 
         bool diskBusy;
@@ -1654,8 +2049,8 @@ namespace C2Launcher
             var d = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
             if (!string.IsNullOrEmpty(info))
             {
-                var t = U.T(info, 14, "Muted");
-                t.VerticalAlignment = VerticalAlignment.Bottom; t.TextWrapping = TextWrapping.NoWrap;
+                var t = U.T(info, 13, "Dim");
+                t.VerticalAlignment = VerticalAlignment.Bottom; t.TextWrapping = TextWrapping.NoWrap; t.Margin = new Thickness(0, 0, 0, 2);
                 DockPanel.SetDock(t, Dock.Right);
                 d.Children.Add(t);
             }
@@ -1663,68 +2058,40 @@ namespace C2Launcher
             return d;
         }
 
-        // Barras por dia (uma cor só, sem legenda; o valor aparece ao passar o mouse); dias sem partida ficam como um traço na base
-        FrameworkElement ActivityChart(long[] per)
-        {
-            var pt = CultureInfo.GetCultureInfo("pt-BR");
-            int n = per.Length;
-            long max = Math.Max(1, per.Max());
-            var bars = new Grid { Height = 130 };
-            var labels = new Grid { Margin = new Thickness(0, 6, 0, 0) };
-            for (int i = 0; i < n; i++) { bars.ColumnDefinitions.Add(new ColumnDefinition()); labels.ColumnDefinitions.Add(new ColumnDefinition()); }
-            for (int i = 0; i < n; i++)
-            {
-                DateTime day = DateTime.Today.AddDays(i - (n - 1));
-                bool has = per[i] > 0;
-                var bar = new Border { Height = has ? Math.Max(5, 124.0 * per[i] / max) : 3, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(2, 0, 2, 0), MaxWidth = 16,
-                    CornerRadius = has ? new CornerRadius(4, 4, 0, 0) : new CornerRadius(1.5) };
-                bar.SetResourceReference(Border.BackgroundProperty, has ? "Accent" : "Line");
-                var hit = new Border { Background = Brushes.Transparent, Child = bar,
-                    ToolTip = pt.TextInfo.ToTitleCase(day.ToString("ddd, d 'de' MMM", pt)) + "  ·  " + (has ? U.Duration(per[i]) : "sem partidas") };
-                Grid.SetColumn(hit, i);
-                bars.Children.Add(hit);
-                if (i % 7 == 0 || i == n - 1)
-                {
-                    var l = U.T(i == n - 1 ? "hoje" : day.ToString("d MMM", pt), 12, "Dim");
-                    l.TextWrapping = TextWrapping.NoWrap;
-                    if (i == n - 1) { l.HorizontalAlignment = HorizontalAlignment.Right; Grid.SetColumn(l, n - 3); Grid.SetColumnSpan(l, 3); }
-                    else { Grid.SetColumn(l, i); Grid.SetColumnSpan(l, 4); l.Margin = new Thickness(2, 0, 0, 0); }
-                    labels.Children.Add(l);
-                }
-            }
-            var baseLine = new Border { Height = 1, VerticalAlignment = VerticalAlignment.Bottom, Opacity = 0.6, IsHitTestVisible = false };
-            baseLine.SetResourceReference(Border.BackgroundProperty, "Line");
-            var chart = new Grid();
-            chart.Children.Add(baseLine);
-            chart.Children.Add(bars);
-            var sp = new StackPanel { Margin = new Thickness(0, 0, 0, 34) };
-            sp.Children.Add(chart);
-            sp.Children.Add(labels);
-            return sp;
-        }
-
-        static string Pct(long part, long whole) { return (whole > 0 ? Math.Round(100.0 * part / whole) : 0) + "%"; }
-
-        FrameworkElement StatTile(string label, string value, string sub)
-        {
-            var sp = new StackPanel();
-            sp.Children.Add(U.T(label, 13, "Muted"));
-            var v = U.T(value, 28, "Text", FontWeights.SemiBold);
-            v.Margin = new Thickness(0, 6, 0, 2); v.TextWrapping = TextWrapping.NoWrap; v.TextTrimming = TextTrimming.CharacterEllipsis;
-            sp.Children.Add(v);
-            var s = U.T(sub, 13, "Dim");
-            s.TextWrapping = TextWrapping.NoWrap; s.TextTrimming = TextTrimming.CharacterEllipsis;
-            sp.Children.Add(s);
-            return new Border { Child = sp, Background = U.Solid(Color.FromArgb(12, 255, 255, 255)), BorderBrush = U.Solid(Color.FromArgb(22, 255, 255, 255)), BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8), Padding = new Thickness(20, 16, 20, 16), Margin = new Thickness(0, 0, 14, 0) };
-        }
-
         static FrameworkElement StatsHeader(string text)
         {
             return new TextBlock { Text = text, FontSize = 20, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 12) };
         }
 
-        // Barra horizontal: fim arredondado; com trilho quando é parte de um todo (conquistas)
+        static string Pct(long part, long whole) { return (whole > 0 ? Math.Round(100.0 * part / whole) : 0) + "%"; }
+
+        // Cartão das estatísticas: um degrau acima do fundo, sem sombra
+        static Border StatCard(UIElement child, Thickness padding, Thickness margin)
+        {
+            return new Border { Child = child, Padding = padding, Margin = margin, CornerRadius = new CornerRadius(10),
+                Background = U.Solid(Color.FromArgb(11, 255, 255, 255)), BorderBrush = U.Solid(Color.FromArgb(20, 255, 255, 255)), BorderThickness = new Thickness(1) };
+        }
+
+        static TextBlock Note(string text)
+        {
+            var t = U.T(text, 13, "Dim");
+            t.TextWrapping = TextWrapping.NoWrap; t.TextTrimming = TextTrimming.CharacterEllipsis;
+            return t;
+        }
+
+        // Barra de progresso de um todo: trilho no tom de linha, preenchimento na cor de destaque
+        static FrameworkElement Meter(long value, long total, string caption)
+        {
+            var sp = new StackPanel();
+            var bar = (Grid)Bar(value, total, true);
+            bar.Height = 6;
+            bar.Margin = new Thickness(0, 2, 0, 6);
+            sp.Children.Add(bar);
+            if (!string.IsNullOrEmpty(caption)) sp.Children.Add(Note(caption));
+            return sp;
+        }
+
+        // Barra horizontal: fim arredondado, rente à base; com trilho quando é parte de um todo (conquistas)
         static FrameworkElement Bar(long value, long max, bool track)
         {
             var g = new Grid { Height = 8, VerticalAlignment = VerticalAlignment.Center };
@@ -1746,27 +2113,211 @@ namespace C2Launcher
             return g;
         }
 
-        // Linha clicável: miniatura + nome | barra | valor; abre a página do jogo
-        FrameworkElement StatRow(GameDef g, FrameworkElement bar, string value, string tip)
+        // Mapa do semestre: uma coluna por semana (segunda a domingo), um quadrado por dia; o valor exato fica no tooltip
+        FrameworkElement ActivityMap(List<Session> sessions, CultureInfo pt)
+        {
+            const int Weeks = 26, Cell = 16, Gap = 4;
+            DateTime monday = DateTime.Today.AddDays(-(((int)DateTime.Today.DayOfWeek + 6) % 7));
+            DateTime start = monday.AddDays(-7 * (Weeks - 1));
+            int days = (int)(DateTime.Today - start).TotalDays + 1;
+            var per = Sessions.PerDay(sessions, days);
+            long max = Math.Max(1, per.Max());
+            var opac = new[] { 0.0, 0.3, 0.52, 0.76, 1.0 };
+            Func<long, int> level = v => v <= 0 ? 0 : Math.Min(4, Math.Max(1, (int)Math.Ceiling(4.0 * v / max)));
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+            for (int w = 0; w < Weeks; w++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Cell + Gap) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(20) });
+            for (int r = 0; r < 7; r++) grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(Cell + Gap) });
+            var dayNames = new[] { "Seg", "", "Qua", "", "Sex", "", "" };
+            for (int r = 0; r < 7; r++)
+            {
+                if (dayNames[r] == "") continue;
+                var l = U.T(dayNames[r], 11, "Dim");
+                l.VerticalAlignment = VerticalAlignment.Top; l.Margin = new Thickness(0, 1, 0, 0);
+                Grid.SetRow(l, r + 1);
+                grid.Children.Add(l);
+            }
+            int lastLabel = -9;
+            for (int w = 0; w < Weeks; w++)
+            {
+                DateTime colStart = start.AddDays(7 * w);
+                if (colStart.Day <= 7 && w < Weeks - 2 && w - lastLabel >= 3)   // na primeira semana que começa dentro do mês (o mês que só pega a 1ª coluna fica sem rótulo)
+                {
+                    var ml = U.T(colStart.ToString("MMM", pt).TrimEnd('.'), 11, "Dim");
+                    ml.TextWrapping = TextWrapping.NoWrap;
+                    Grid.SetColumn(ml, w + 1); Grid.SetColumnSpan(ml, 3);
+                    lastLabel = w;
+                    grid.Children.Add(ml);
+                }
+                for (int r = 0; r < 7; r++)
+                {
+                    int i = 7 * w + r;
+                    if (i >= days) break;
+                    DateTime day = start.AddDays(i);
+                    int lv = level(per[i]);
+                    var cell = new Border { Width = Cell, Height = Cell, CornerRadius = new CornerRadius(4), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+                    if (lv == 0) cell.SetResourceReference(Border.BackgroundProperty, "Line");
+                    else { cell.SetResourceReference(Border.BackgroundProperty, "Accent"); cell.Opacity = opac[lv]; }
+                    if (day == DateTime.Today) { cell.BorderThickness = new Thickness(1.5); cell.SetResourceReference(Border.BorderBrushProperty, "Muted"); }
+                    var hit = new Border { Background = Brushes.Transparent, Child = cell,
+                        ToolTip = pt.TextInfo.ToTitleCase(day.ToString("ddd, d 'de' MMM", pt)) + "  ·  " + (per[i] > 0 ? U.Duration(per[i]) : "sem partidas") };
+                    Grid.SetColumn(hit, w + 1); Grid.SetRow(hit, r + 1);
+                    grid.Children.Add(hit);
+                }
+            }
+
+            // Legenda: menos → mais
+            var legend = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(34, 8, 0, 0) };
+            var lessT = U.T("Menos", 11, "Dim"); lessT.Margin = new Thickness(0, 0, 6, 0); lessT.VerticalAlignment = VerticalAlignment.Center;
+            legend.Children.Add(lessT);
+            for (int lv = 0; lv <= 4; lv++)
+            {
+                var c = new Border { Width = 12, Height = 12, CornerRadius = new CornerRadius(3), Margin = new Thickness(0, 0, 3, 0) };
+                if (lv == 0) c.SetResourceReference(Border.BackgroundProperty, "Line"); else { c.SetResourceReference(Border.BackgroundProperty, "Accent"); c.Opacity = opac[lv]; }
+                legend.Children.Add(c);
+            }
+            var moreT = U.T("Mais", 11, "Dim"); moreT.Margin = new Thickness(3, 0, 0, 0); moreT.VerticalAlignment = VerticalAlignment.Center;
+            legend.Children.Add(moreT);
+            var left = new StackPanel();
+            left.Children.Add(grid);
+            left.Children.Add(legend);
+
+            // Resumo ao lado
+            int active = per.Count(v => v > 0);
+            int bestDay = Array.IndexOf(per, per.Max());
+            var longest = sessions.OrderByDescending(s => s.Seconds).First();
+            // Resumo embaixo do mapa, em três colunas (a coluna principal do perfil não tem largura para pôr ao lado)
+            var facts = new UniformGrid { Columns = 3, Margin = new Thickness(34, 18, 0, 0) };
+            Action<string, string> fact = (k, v) =>
+            {
+                var c = new StackPanel { Margin = new Thickness(0, 0, 16, 0) };
+                c.Children.Add(U.T(k, 12, "Dim"));
+                var vt = U.T(v, 15, "Text", FontWeights.SemiBold);
+                vt.Margin = new Thickness(0, 2, 0, 0); vt.TextTrimming = TextTrimming.CharacterEllipsis;
+                c.Children.Add(vt);
+                facts.Children.Add(c);
+            };
+            fact("Dias com partida", active + " de " + days);
+            if (per.Max() > 0) fact("Dia mais ativo", start.AddDays(bestDay).ToString("d 'de' MMM", pt) + "  ·  " + U.Duration(per.Max()));
+            fact("Partida mais longa", U.Duration(longest.Seconds) + "  ·  " + longest.Start.ToString("d 'de' MMM", pt));
+            left.Children.Add(facts);
+            return left;
+        }
+
+        // Colunas de segunda a domingo; só o dia campeão leva o valor escrito (os outros, no tooltip)
+        FrameworkElement WeekdayChart(long[] perDay)
+        {
+            var names = new[] { "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom" };
+            var full = new[] { "segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo" };
+            long max = Math.Max(1, perDay.Max());
+            int top = Array.IndexOf(perDay, perDay.Max());
+            var sp = new StackPanel();
+            sp.Children.Add(U.T("Por dia da semana", 15, "Text", FontWeights.SemiBold));
+            var sub = U.T(perDay.Max() > 0 ? "Você joga mais " + (top >= 5 ? "no " : "na ") + full[top] : "Ainda sem partidas", 13, "Dim");
+            sub.Margin = new Thickness(0, 2, 0, 14);
+            sp.Children.Add(sub);
+            var cols = new Grid { Height = 140 };
+            var labels = new Grid { Margin = new Thickness(0, 6, 0, 0) };
+            for (int i = 0; i < 7; i++) { cols.ColumnDefinitions.Add(new ColumnDefinition()); labels.ColumnDefinitions.Add(new ColumnDefinition()); }
+            for (int i = 0; i < 7; i++)
+            {
+                bool has = perDay[i] > 0;
+                var col = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom };
+                if (i == top && has)
+                {
+                    var v = U.T(U.Duration(perDay[i]), 12, "Muted");
+                    v.HorizontalAlignment = HorizontalAlignment.Center; v.Margin = new Thickness(-40, 0, -40, 4); v.TextWrapping = TextWrapping.NoWrap; v.TextAlignment = TextAlignment.Center;   // pode passar da coluna, que é estreita
+                    col.Children.Add(v);
+                }
+                var bar = new Border { Width = 24, Height = has ? Math.Max(5, 112.0 * perDay[i] / max) : 3, CornerRadius = has ? new CornerRadius(4, 4, 0, 0) : new CornerRadius(1.5) };
+                bar.SetResourceReference(Border.BackgroundProperty, has ? "Accent" : "Line");
+                col.Children.Add(bar);
+                var hit = new Border { Background = Brushes.Transparent, Child = col, ToolTip = char.ToUpper(full[i][0]) + full[i].Substring(1) + "  ·  " + (has ? U.Duration(perDay[i]) : "sem partidas") };
+                Grid.SetColumn(hit, i);
+                cols.Children.Add(hit);
+                var l = U.T(names[i], 12, i == top && has ? "Text" : "Dim");
+                l.HorizontalAlignment = HorizontalAlignment.Center;
+                Grid.SetColumn(l, i);
+                labels.Children.Add(l);
+            }
+            var baseLine = new Border { Height = 1, VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false };
+            baseLine.SetResourceReference(Border.BackgroundProperty, "Line");
+            var chart = new Grid();
+            chart.Children.Add(baseLine);
+            chart.Children.Add(cols);
+            sp.Children.Add(chart);
+            sp.Children.Add(labels);
+            return sp;
+        }
+
+        // Madrugada, manhã, tarde e noite: barras horizontais com a fatia na ponta
+        FrameworkElement DayPartChart(long[] perHour)
+        {
+            var names = new[] { "Madrugada", "Manhã", "Tarde", "Noite" };
+            var hours = new[] { "0h às 6h", "6h às 12h", "12h às 18h", "18h às 24h" };
+            var sums = new long[4];
+            for (int h = 0; h < 24; h++) sums[h / 6] += perHour[h];
+            long max = Math.Max(1, sums.Max()), all = Math.Max(1, sums.Sum());
+            int top = Array.IndexOf(sums, sums.Max());
+            var sp = new StackPanel();
+            sp.Children.Add(U.T("Por período do dia", 15, "Text", FontWeights.SemiBold));
+            var sub = U.T(sums.Max() > 0 ? "Seu horário preferido: " + names[top].ToLowerInvariant() : "Ainda sem partidas", 13, "Dim");
+            sub.Margin = new Thickness(0, 2, 0, 18);
+            sp.Children.Add(sub);
+            for (int i = 0; i < 4; i++)
+            {
+                var row = new Grid { Margin = new Thickness(0, 0, 0, 14), Background = Brushes.Transparent, ToolTip = names[i] + " (" + hours[i] + ")  ·  " + (sums[i] > 0 ? U.Duration(sums[i]) + "  ·  " + Pct(sums[i], all) : "sem partidas") };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
+                row.ColumnDefinitions.Add(new ColumnDefinition());
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(48) });
+                var name = new StackPanel();
+                name.Children.Add(U.T(names[i], 13, i == top && sums[i] > 0 ? "Text" : "Muted"));
+                name.Children.Add(U.T(hours[i], 11, "Dim"));
+                row.Children.Add(name);
+                var bar = Bar(sums[i], max, false);
+                bar.Margin = new Thickness(0, 0, 12, 0);
+                Grid.SetColumn(bar, 1);
+                row.Children.Add(bar);
+                var v = U.T(sums[i] > 0 ? Pct(sums[i], all) : "—", 13, "Muted");
+                v.VerticalAlignment = VerticalAlignment.Center; v.HorizontalAlignment = HorizontalAlignment.Right;
+                Grid.SetColumn(v, 2);
+                row.Children.Add(v);
+                sp.Children.Add(row);
+            }
+            return sp;
+        }
+
+        // Linha clicável: capa + nome (com detalhe embaixo) | barra | valor e fatia; abre a página do jogo
+        FrameworkElement StatRow(GameDef g, string sub, FrameworkElement bar, string value, string share, string tip)
         {
             var row = new Grid { Margin = new Thickness(0, 0, 0, 2) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
             row.ColumnDefinitions.Add(new ColumnDefinition());
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(52) });
             var name = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             var th = Thumb(g);
-            if (th != null) name.Children.Add(new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(4), Margin = new Thickness(0, 0, 12, 0),
+            if (th != null) name.Children.Add(new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(6), Margin = new Thickness(0, 0, 12, 0),
                 Background = new ImageBrush(th) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top } });
-            name.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 15, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 220 });
+            var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            txt.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 15, FontWeight = FontWeights.Medium, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 230 });
+            if (!string.IsNullOrEmpty(sub)) { var st = Note(sub); st.MaxWidth = 230; st.FontSize = 12; txt.Children.Add(st); }
+            name.Children.Add(txt);
             row.Children.Add(name);
             bar.Margin = new Thickness(0, 0, 18, 0);
             Grid.SetColumn(bar, 1);
             row.Children.Add(bar);
-            var val = U.T(value, 14, "Muted");
+            var val = U.T(value, 14, "Text", FontWeights.Medium);
             val.VerticalAlignment = VerticalAlignment.Center; val.TextWrapping = TextWrapping.NoWrap;
             Grid.SetColumn(val, 2);
             row.Children.Add(val);
-            var bg = new Border { Child = row, Padding = new Thickness(10, 8, 10, 8), CornerRadius = new CornerRadius(6), Background = Brushes.Transparent };
+            var sh = U.T(share, 13, "Dim");
+            sh.VerticalAlignment = VerticalAlignment.Center; sh.HorizontalAlignment = HorizontalAlignment.Right;
+            Grid.SetColumn(sh, 3);
+            row.Children.Add(sh);
+            var bg = new Border { Child = row, Padding = new Thickness(12, 9, 12, 9), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent };
             var b = new Button { Style = U.S("BareButton"), Content = bg, ToolTip = tip, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             b.MouseEnter += (s, e) => bg.Background = U.Solid(Color.FromArgb(14, 255, 255, 255));
             b.MouseLeave += (s, e) => bg.Background = Brushes.Transparent;
@@ -1775,6 +2326,7 @@ namespace C2Launcher
             b.Click += (s, e) => OpenGame(g, null, null);
             return b;
         }
+
 
         // ================= Carrossel em destaque =================
         List<Grid> carCards;
