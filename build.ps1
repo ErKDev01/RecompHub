@@ -14,7 +14,7 @@ $refs = @(
 ) | ForEach-Object { "/r:$_" }
 
 # Tema e fontes vão embutidos no .exe
-$res = @("/resource:$(Join-Path $src 'Theme.xaml'),Theme.xaml")
+$res = @("/resource:$(Join-Path $src 'Theme.xaml'),Theme.xaml", "/resource:$(Join-Path $PSScriptRoot 'icon.ico'),icon.ico")   # o ícone também vai como recurso: a logo da barra lateral usa o quadro grande
 Get-ChildItem (Join-Path $PSScriptRoot 'fonts') -Filter *.ttf | ForEach-Object { $res += "/resource:$($_.FullName),$($_.Name)" }
 
 $icon = Join-Path $PSScriptRoot 'icon.ico'   # gerado por tools\make_icon.ps1

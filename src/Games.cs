@@ -204,7 +204,7 @@ namespace C2Launcher
             g.Theme = new GameTheme
             {
                 // nada abaixo de ~#111: tons quase pretos viram manchas pretas na tela
-                Bg = Hex("#141416"), Panel = Hex("#18181B"), Card = Hex("#1E1E22"), Line = Hex("#2C2C31"), Text = Hex("#EEEBE6"), Muted = Hex("#A5A19B"), Dim = Hex("#6F6C68"),
+                Bg = Hex("#141416"), Panel = Hex("#18181B"), Card = Hex("#1E1E22"), Line = Hex("#2C2C31"), Text = Hex("#EEEBE6"), Muted = Hex("#A5A19B"), Dim = Hex("#8C8882"),
                 Accent = Hex("#E0A84A"), AccentHi = Hex("#F2BD62"), AccentLo = Hex("#3D2E14"), OnAccent = Hex("#141414"), Focus = Hex("#9B7BFF"),
                 Display = Fonts2.Hub, Flavor = Fonts2.Hub, Radius = 4, TitleSize = 110, Line2Size = 24
             };
@@ -304,7 +304,7 @@ namespace C2Launcher
                 Game.PublicAchievementCount, Path.Combine(root, "Assets", "default.xex"));
             g.Theme = new GameTheme
             {
-                Bg = Hex("#0D0C0C"), Panel = Hex("#141212"), Card = Hex("#1C1818"), Line = Hex("#2E2626"), Text = Hex("#EDE6E2"), Muted = Hex("#A0948F"), Dim = Hex("#6E6460"),
+                Bg = Hex("#0D0C0C"), Panel = Hex("#141212"), Card = Hex("#1C1818"), Line = Hex("#2E2626"), Text = Hex("#EDE6E2"), Muted = Hex("#A0948F"), Dim = Hex("#8C807B"),
                 Accent = Hex("#B3141C"), AccentHi = Hex("#D3232B"), AccentLo = Hex("#4A0B0E"), OnAccent = Colors.White, Focus = Hex("#9B7BFF"),
                 Display = Fonts2.Hub, Flavor = Fonts2.Hub, Radius = 3, TitleSize = 132, Line2Size = 28
             };
@@ -375,7 +375,7 @@ namespace C2Launcher
                 Setting.B("tweak_circle_confirm", "Círculo confirma (padrão japonês)", false, "")));
             g.Theme = new GameTheme
             {
-                Bg = Hex("#0A0C10"), Panel = Hex("#11141A"), Card = Hex("#171B22"), Line = Hex("#2A2E36"), Text = Hex("#E8E2D4"), Muted = Hex("#A39C8C"), Dim = Hex("#6C675C"),
+                Bg = Hex("#0A0C10"), Panel = Hex("#11141A"), Card = Hex("#171B22"), Line = Hex("#2A2E36"), Text = Hex("#E8E2D4"), Muted = Hex("#A39C8C"), Dim = Hex("#8A8478"),
                 Accent = Hex("#7E1A1E"), AccentHi = Hex("#9C2328"), AccentLo = Hex("#3A1214"), OnAccent = Hex("#F1E3C4"), Focus = Hex("#C9AE72"),
                 Display = Fonts2.Hub, Flavor = Fonts2.Hub, Radius = 0, TitleSize = 112, Line2Size = 26, SpacedLine2 = false
             };
@@ -442,7 +442,7 @@ namespace C2Launcher
                 Setting.N("overlay_opacity", "Opacidade do painel", 50, 0, 100, 5, 0, "%", "", true)));
             g.Theme = new GameTheme
             {
-                Bg = Hex("#09090D"), Panel = Hex("#101016"), Card = Hex("#17171F"), Line = Hex("#282833"), Text = Hex("#F2F1F5"), Muted = Hex("#A3A1B0"), Dim = Hex("#686675"),
+                Bg = Hex("#09090D"), Panel = Hex("#101016"), Card = Hex("#17171F"), Line = Hex("#282833"), Text = Hex("#F2F1F5"), Muted = Hex("#A3A1B0"), Dim = Hex("#868494"),
                 Accent = Hex("#FF2E88"), AccentHi = Hex("#FF5FA6"), AccentLo = Hex("#4A1030"), OnAccent = Hex("#0A0A0F"), Focus = Hex("#2EE6FF"),
                 Display = Fonts2.Hub, Flavor = Fonts2.Hub, Radius = 0, TitleSize = 108, Line2Size = 30
             };
@@ -477,12 +477,12 @@ namespace C2Launcher
             g.Groups.Add(Group("Imagem",
                 Pick("eot_quality_preset", "Predefinição de qualidade", "low", "", "low", "Baixa", "medium", "Média", "high", "Alta", "ultra", "Ultra", "custom", "Personalizada"),
                 Setting.B("eot_vsync", "V-Sync", false, ""),
-                Setting.N("eot_fps_limit", "Limite de FPS", 180, 30, 360, 1, 0, "FPS", "", true),
+                Setting.N("eot_fps_limit", "Limite de FPS", 60, 30, 360, 1, 0, "FPS", "Acima de 60, portas, alavancas e o botão de interagir podem parar de funcionar (problema conhecido do port, issue #11).", true),
                 Pick("eot_anisotropy", "Filtro anisotrópico", "0", "", "0", "Desligado", "2", "2×", "4", "4×", "8", "8×", "16", "16×"),
                 Pick("eot_shadow_map_size", "Resolução das sombras", "1024", "", "512", "512", "1024", "1024", "2048", "2048", "4096", "4096")));
             g.Theme = new GameTheme
             {
-                Bg = Hex("#080C18"), Panel = Hex("#0E1424"), Card = Hex("#141C30"), Line = Hex("#25304A"), Text = Hex("#F4F6FB"), Muted = Hex("#A3ADC4"), Dim = Hex("#66708A"),
+                Bg = Hex("#080C18"), Panel = Hex("#0E1424"), Card = Hex("#141C30"), Line = Hex("#25304A"), Text = Hex("#F4F6FB"), Muted = Hex("#A3ADC4"), Dim = Hex("#8490A8"),
                 Accent = Hex("#E2231A"), AccentHi = Hex("#FF3B30"), AccentLo = Hex("#4A1214"), OnAccent = Colors.White, Focus = Hex("#3B82F6"),
                 Display = Fonts2.Hub, Flavor = Fonts2.Hub, Radius = 6, TitleSize = 120, Line2Size = 34
             };

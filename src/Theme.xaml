@@ -8,7 +8,7 @@
   <SolidColorBrush x:Key="Line" Color="#2A2A2D"/>
   <SolidColorBrush x:Key="Text" Color="#ECE9E4"/>
   <SolidColorBrush x:Key="Muted" Color="#A29E98"/>
-  <SolidColorBrush x:Key="Dim" Color="#6F6C68"/>
+  <SolidColorBrush x:Key="Dim" Color="#8C8882"/>
   <SolidColorBrush x:Key="Accent" Color="#D9D4CC"/>
   <SolidColorBrush x:Key="AccentHi" Color="#FFFFFF"/>
   <SolidColorBrush x:Key="AccentLo" Color="#3A3936"/>
@@ -16,6 +16,8 @@
   <SolidColorBrush x:Key="Focus" Color="#9B7BFF"/>
   <SolidColorBrush x:Key="Ok" Color="#7CC47F"/>
   <SolidColorBrush x:Key="Warn" Color="#E3AE52"/>
+  <!-- Cor da marca (a seta âmbar da logo): marcador do item ativo da barra lateral -->
+  <SolidColorBrush x:Key="Brand" Color="#E9A23B"/>
   <CornerRadius x:Key="Radius">4</CornerRadius>
 
   <Style x:Key="FocusRing">
@@ -175,9 +177,12 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="RadioButton">
-          <Border x:Name="b" Background="Transparent" CornerRadius="6" Padding="14,11">
-            <ContentPresenter VerticalAlignment="Center"/>
-          </Border>
+          <Grid>
+            <Border x:Name="b" Background="Transparent" CornerRadius="6" Padding="14,11">
+              <ContentPresenter VerticalAlignment="Center"/>
+            </Border>
+            <Border x:Name="mark" Width="3" CornerRadius="2" Margin="0,10" HorizontalAlignment="Left" Background="{DynamicResource Brand}" Visibility="Collapsed"/>
+          </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
               <Setter TargetName="b" Property="Background" Value="#14FFFFFF"/>
@@ -185,6 +190,7 @@
             </Trigger>
             <Trigger Property="IsChecked" Value="True">
               <Setter TargetName="b" Property="Background" Value="#24FFFFFF"/>
+              <Setter TargetName="mark" Property="Visibility" Value="Visible"/>
               <Setter Property="Foreground" Value="White"/>
             </Trigger>
           </ControlTemplate.Triggers>

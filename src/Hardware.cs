@@ -164,7 +164,7 @@ namespace C2Launcher
                     set("eot_anisotropy", t == 0 ? "4" : "16", t == 0 ? "leve para placas simples" : "texturas nítidas em ângulo, custo quase zero");
                     set("eot_shadow_map_size", new[] { "1024", "2048", "4096", "4096" }[t], "sombras de acordo com a memória de vídeo");
                     set("eot_vsync", "true", "evita cortes na imagem");
-                    set("eot_fps_limit", fps.ToString(), "acompanha os " + hw.Hz + " Hz do monitor");
+                    set("eot_fps_limit", "60", "acima de 60 as portas e interações do jogo travam (problema conhecido do port)");   // não acompanha os Hz do monitor: a lógica do jogo é presa a 60
                     break;
                 case "c2":
                     // Escala interna: 1× é o 720p do Xbox 360; mira a altura do monitor, limitada pelo nível

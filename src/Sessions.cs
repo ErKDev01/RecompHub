@@ -142,19 +142,5 @@ namespace C2Launcher
             }
             return res;
         }
-
-        // Segundos por dia da semana (0 = segunda … 6 = domingo), somando o histórico todo
-        public static long[] PerWeekday(List<Session> all)
-        {
-            var res = new long[7];
-            var days = all.Count == 0 ? 0 : (int)(DateTime.Today - all.Min(s => s.Start.Date)).TotalDays + 1;
-            var per = PerDay(all, Math.Max(1, days));
-            for (int i = 0; i < per.Length; i++)
-            {
-                var d = DateTime.Today.AddDays(i - (per.Length - 1));
-                res[((int)d.DayOfWeek + 6) % 7] += per[i];
-            }
-            return res;
-        }
     }
 }
