@@ -4,11 +4,11 @@ Um lugar só para os jogos de console **recompilados para rodar nativamente no P
 Condemned 2, Bloodborne, inFAMOUS, Spider-Man, Perfect Dark e centenas de outros projetos da comunidade.
 O hub encontra, instala, atualiza e abre os seus recomps, cada um com a própria página.
 
-![Tela inicial do Recomp Hub](docs/inicio.png)
+![Tela inicial do Recomp Hub](docs/site/home.jpg)
 
 ## Baixar
 
-**[⬇ Baixar a versão mais recente](../../releases/latest)**: é um arquivo só, o `RecompHub.exe` (cerca de 2 MB).
+**[⬇ Baixar a versão mais recente](../../releases/latest)**: é um arquivo só, o `RecompHub.exe` (cerca de 2 MB). Site: **[erkdev01.github.io/RecompHub](https://erkdev01.github.io/RecompHub/)**
 
 - Windows 10 ou 11 (64 bits). Não precisa instalar nada: é só abrir.
 - Coloque o `RecompHub.exe` numa pasta sua (por exemplo `Documentos` ou a área de trabalho) e abra.
@@ -41,9 +41,9 @@ você pode conferir o arquivo no [VirusTotal](https://www.virustotal.com) antes 
 
 | | |
 |---|---|
-| ![Explorar](docs/explorar.png) | **Explorar**: o catálogo do allrecomps com busca e filtro por console, mais os projetos da lista [Awesome Game Decompilations](https://github.com/CharlotteCross1998/awesome-game-decompilations) que têm versão para Windows. Antes de instalar, o hub mostra os dados do projeto no GitHub (estrelas, idade, última atualização) e avisa sobre projetos muito novos. |
-| ![Página do jogo](docs/jogo.png) | **Página de cada jogo**: arte oficial com parallax, conquistas e troféus, configurações do recomp, backups dos saves e a trilha sonora (coloque as músicas na pasta `OST` do jogo). |
-| ![Estatísticas](docs/estatisticas.png) | **Estatísticas**: tempo total e por jogo, e o progresso das conquistas. |
+| ![Explorar](docs/site/explore.jpg) | **Explorar**: o catálogo do allrecomps com busca e filtro por console, mais os projetos da lista [Awesome Game Decompilations](https://github.com/CharlotteCross1998/awesome-game-decompilations) que têm versão para Windows. Antes de instalar, o hub mostra os dados do projeto no GitHub (estrelas, idade, última atualização) e avisa sobre projetos muito novos. |
+| ![Página do jogo](docs/site/game_bb.jpg) | **Página de cada jogo**: arte oficial com parallax, conquistas e troféus, configurações do recomp, backups dos saves e a trilha sonora (coloque as músicas na pasta `OST` do jogo). |
+| ![Perfil](docs/site/stats.jpg) | **Perfil**: jogo favorito, atividade recente, conquistas por jogo, insígnias e um nível que sobe com as horas jogadas, com o banner que você escolher. |
 
 Também tem:
 
