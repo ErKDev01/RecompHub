@@ -87,7 +87,7 @@ namespace C2Launcher
             {
                 string tmp = target + ".part";
                 using (var wc = Client(false)) await wc.DownloadFileTaskAsync(new Uri(url), tmp);
-                if (new FileInfo(tmp).Length < 2048) { File.Delete(tmp); return false; }
+                if (new FileInfo(tmp).Length < 2048 || !IsImage(tmp)) { File.Delete(tmp); return false; }
                 if (File.Exists(target)) File.Delete(target);
                 File.Move(tmp, target);
                 return true;
@@ -97,6 +97,23 @@ namespace C2Launcher
                 try { if (File.Exists(target + ".part")) File.Delete(target + ".part"); } catch { }
                 return false;
             }
+        }
+
+        // Só guarda o que é imagem de verdade (JPEG, PNG ou WebP, até 25 MB): o servidor de imagens da Xbox só responde
+        // por HTTP, então alguém na mesma rede poderia trocar a resposta; assim, outra coisa nunca entra no cache como "imagem"
+        static bool IsImage(string path)
+        {
+            try
+            {
+                if (new FileInfo(path).Length > 25L * 1024 * 1024) return false;
+                var h = new byte[12];
+                using (var f = File.OpenRead(path)) if (f.Read(h, 0, 12) < 12) return false;
+                bool jpg = h[0] == 0xFF && h[1] == 0xD8 && h[2] == 0xFF;
+                bool png = h[0] == 0x89 && h[1] == 0x50 && h[2] == 0x4E && h[3] == 0x47;
+                bool webp = h[0] == 'R' && h[1] == 'I' && h[2] == 'F' && h[3] == 'F' && h[8] == 'W' && h[9] == 'E' && h[10] == 'B' && h[11] == 'P';
+                return jpg || png || webp;
+            }
+            catch { return false; }
         }
 
         static string Ext(string url) { var m = Regex.Match(url, @"\.(png|jpe?g)(\?|$)", RegexOptions.IgnoreCase); return m.Success ? "." + m.Groups[1].Value.ToLowerInvariant() : ".jpg"; }
@@ -140,7 +157,7 @@ namespace C2Launcher
 
             if (!string.IsNullOrEmpty(g.XboxTitleId))
             {
-                // O servidor antigo só responde por HTTP; são imagens públicas, sem login
+                // O servidor antigo só responde por HTTP (HTTPS nem conecta); são imagens públicas, sem login, e Download só aceita imagem de verdade (IsImage)
                 string b = "http://download.xbox.com/content/images/66acd000-77fe-1000-9115-d802" + g.XboxTitleId.ToLowerInvariant() + "/1033/";
                 if (!g.SkipXboxBackground && await Download(b + "background.jpg", Path.Combine(d, "bg.jpg"))) got++;
                 for (int i = 1; i <= 8; i++)

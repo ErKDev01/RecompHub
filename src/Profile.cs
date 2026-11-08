@@ -49,7 +49,7 @@ namespace C2Launcher
             if (img != null)
             {
                 g.Children.Add(new Ellipse { Fill = new ImageBrush(img) { Stretch = Stretch.UniformToFill } });
-                g.Children.Add(new Ellipse { Stroke = U.Solid(Color.FromArgb(40, 255, 255, 255)), StrokeThickness = 1 });
+                g.Children.Add(new Ellipse { Stroke = U.Solid(Ink(40)), StrokeThickness = 1 });
                 return g;
             }
             return IconOrInitials(Prefs.Get("profile_icon"), Prefs.Get("profile_color", AvatarColors[0]), ProfileName, size);
@@ -67,7 +67,7 @@ namespace C2Launcher
             else
                 g.Children.Add(new TextBlock { Text = Initials(string.IsNullOrEmpty(name) ? "?" : name), FontSize = size * 0.38, FontWeight = FontWeights.SemiBold, Foreground = ink,
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
-            g.Children.Add(new Ellipse { Stroke = U.Solid(Color.FromArgb(40, 255, 255, 255)), StrokeThickness = 1 });
+            g.Children.Add(new Ellipse { Stroke = U.Solid(Ink(40)), StrokeThickness = 1 });
             return g;
         }
 
@@ -76,7 +76,7 @@ namespace C2Launcher
         // Cartão do perfil no pé da barra lateral (clica para editar)
         FrameworkElement BuildProfileChip()
         {
-            profileChip = new Border { Margin = new Thickness(0, 0, 0, 14) };
+            profileChip = new Border();
             RefreshProfileChip();
             return profileChip;
         }
@@ -85,19 +85,20 @@ namespace C2Launcher
         {
             if (profileChip == null) return;
             var row = new DockPanel();
-            var av = Avatar(38);
-            av.Margin = new Thickness(0, 0, 12, 0);
-            DockPanel.SetDock(av, Dock.Left);
-            row.Children.Add(av);
+            // Avatar com um anel na cor da marca da paleta
+            var ring = new Border { Child = Avatar(34), Padding = new Thickness(2), CornerRadius = new CornerRadius(19), Margin = new Thickness(0, 0, 10, 0) };
+            ring.SetResourceReference(Border.BackgroundProperty, "Brand");
+            DockPanel.SetDock(ring, Dock.Left);
+            row.Children.Add(ring);
             var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             txt.Children.Add(new TextBlock { Text = ProfileName, FontSize = 15, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
             txt.Children.Add(U.T("Ver perfil", 12, "Dim"));
             row.Children.Add(txt);
-            var bg = new Border { Child = row, Padding = new Thickness(8, 8, 8, 8), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent };
+            var bg = new Border { Child = row, Padding = new Thickness(6, 5, 12, 5), CornerRadius = new CornerRadius(24), Background = Brushes.Transparent };
             var b = new Button { Style = U.S("BareButton"), Content = bg, ToolTip = "Seu perfil" };
-            b.MouseEnter += (s, e) => bg.Background = U.Solid(Color.FromArgb(14, 255, 255, 255));
+            b.MouseEnter += (s, e) => bg.Background = U.Solid(Ink(14));
             b.MouseLeave += (s, e) => bg.Background = Brushes.Transparent;
-            b.GotKeyboardFocus += (s, e) => bg.Background = U.Solid(Color.FromArgb(14, 255, 255, 255));
+            b.GotKeyboardFocus += (s, e) => bg.Background = U.Solid(Ink(14));
             b.LostKeyboardFocus += (s, e) => bg.Background = Brushes.Transparent;
             b.Click += (s, e) => ShowViewByKey("stats");   // abre o perfil (o editor fica no botão "Editar perfil" de lá)
             profileChip.Child = b;
@@ -108,8 +109,21 @@ namespace C2Launcher
         {
             int h = DateTime.Now.Hour;
             string hello = h < 5 ? "Boa noite" : h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
-            var t = new TextBlock { Text = hello + ", " + ProfileName, FontSize = 26, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) };
-            return t;
+            var sp = new WrapPanel { Margin = new Thickness(0, 0, 0, 16) };
+            sp.Children.Add(new TextBlock { Text = hello + ", " + ProfileName, FontSize = 28, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 16, 0) });
+            // Resumo útil ao lado: versões novas e o tamanho da biblioteca
+            var parts = new List<string>();
+            int upd = games.Count(x => x.Installed && Updates.Available(x, Prefs));
+            if (upd > 0) parts.Add(upd == 1 ? "1 jogo com versão nova" : upd + " jogos com versão nova");
+            int inst = games.Count(x => x.Installed);
+            if (inst > 0) parts.Add(inst == 1 ? "1 jogo instalado" : inst + " jogos instalados");
+            if (parts.Count > 0)
+            {
+                var s = U.T(string.Join("  ·  ", parts.ToArray()), 15, "Muted");
+                s.VerticalAlignment = VerticalAlignment.Bottom; s.Margin = new Thickness(0, 0, 0, 4);
+                sp.Children.Add(s);
+            }
+            return sp;
         }
 
         void ShowProfileEditor()
@@ -153,7 +167,7 @@ namespace C2Launcher
                 {
                     var gr = new Grid();
                     gr.Children.Add(new Ellipse { Fill = new ImageBrush(src) { Stretch = Stretch.UniformToFill } });
-                    gr.Children.Add(new Ellipse { Stroke = U.Solid(Color.FromArgb(40, 255, 255, 255)), StrokeThickness = 1 });
+                    gr.Children.Add(new Ellipse { Stroke = U.Solid(Ink(40)), StrokeThickness = 1 });
                     el = gr;
                 }
                 else el = IconOrInitials(iconKey, color, nameBox.Text.Trim(), 96);
@@ -182,7 +196,7 @@ namespace C2Launcher
             {
                 var cc = c;
                 var dot = new Button { Style = U.S("BareButton"), Margin = new Thickness(0, 0, 8, 0), ToolTip = "Cor do fundo (ícone ou iniciais)",
-                    Content = new Ellipse { Width = 26, Height = 26, Fill = U.Solid((Color)ColorConverter.ConvertFromString(cc)), Stroke = U.Solid(Color.FromArgb(60, 255, 255, 255)), StrokeThickness = 1 } };
+                    Content = new Ellipse { Width = 26, Height = 26, Fill = U.Solid((Color)ColorConverter.ConvertFromString(cc)), Stroke = U.Solid(Ink(60)), StrokeThickness = 1 } };
                 dot.Click += (s, e) => { color = cc; pendingImage = null; pendingArt = null; removePhoto = true; paint(); };
                 colors.Children.Add(dot);
             }
@@ -329,7 +343,7 @@ namespace C2Launcher
                     var gg = g;
                     var art = Art.Load(GameBannerArt(g), 400);
                     var tile = new Border { Width = 196, Height = 74, CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(cur == "game:" + g.Id ? 2 : 1),
-                        BorderBrush = cur == "game:" + g.Id ? (Brush)FindResource("Accent") : U.Solid(Color.FromArgb(30, 255, 255, 255)) };
+                        BorderBrush = cur == "game:" + g.Id ? (Brush)FindResource("Accent") : U.Solid(Ink(30)) };
                     if (art != null) tile.Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Center };
                     var cap = new Border { VerticalAlignment = VerticalAlignment.Bottom, Padding = new Thickness(8, 3, 8, 4), CornerRadius = new CornerRadius(0, 0, 6, 6), Background = U.Solid(Color.FromArgb(170, 12, 12, 13)),
                         Child = new TextBlock { Text = g.FullName ?? g.Title, FontSize = 12, Foreground = Brushes.White, TextTrimming = TextTrimming.CharacterEllipsis } };

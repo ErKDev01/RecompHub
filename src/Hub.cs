@@ -38,13 +38,49 @@ namespace C2Launcher
         // Paleta do hub (as páginas de jogo usam a paleta de cada jogo)
         void ApplyHubTheme()
         {
-            Func<string, SolidColorBrush> b = h => { var x = new SolidColorBrush((Color)ColorConverter.ConvertFromString(h)); x.Freeze(); return x; };
-            // Grafite neutro e botão branco-gelo: a cor fica por conta da arte de cada jogo
-            Resources["Bg"] = b("#111113"); Resources["Panel"] = b("#E6141415"); Resources["Card"] = b("#161617");
-            Resources["Line"] = b("#1CFFFFFF"); Resources["Text"] = b("#ECECEC"); Resources["Muted"] = b("#9A9A9A"); Resources["Dim"] = b("#8A8A8A");   // Dim ≥ 4.5:1 sobre o fundo (o #666 dava 3,3:1)
-            Resources["Accent"] = b("#E8E6E1"); Resources["AccentHi"] = b("#FFFFFF"); Resources["AccentLo"] = b("#2A2A2B");
-            Resources["OnAccent"] = b("#111113"); Resources["Focus"] = b("#FFFFFF");
+            // Paleta escolhida em Ajustes (Grafite, o visual original, é a padrão)
+            var p = HubPalette.Current = HubPalette.Find(Prefs.Get("hub_palette"));
+            Func<Color, SolidColorBrush> b = c => { var x = new SolidColorBrush(c); x.Freeze(); return x; };
+            Resources["Bg"] = b(p.Bg); Resources["Panel"] = b(Color.FromArgb(230, p.Card.R, p.Card.G, p.Card.B)); Resources["Card"] = b(p.Card);
+            Resources["Line"] = b(p.Ink(28)); Resources["Text"] = b(p.Text); Resources["Muted"] = b(p.Muted); Resources["Dim"] = b(p.Dim);   // Dim ≥ 4.5:1 sobre o fundo
+            Resources["Accent"] = b(p.Accent); Resources["AccentHi"] = b(p.AccentHi); Resources["AccentLo"] = b(p.Ink(26));
+            Resources["OnAccent"] = b(p.OnAccent); Resources["Focus"] = b(p.Light ? p.Accent : Colors.White);
+            Resources["Brand"] = b(p.Brand); Resources["NavOn"] = b(p.NavOn); Resources["NavOnText"] = b(p.NavOnText);
+            Resources["Wash"] = b(p.Ink(20)); Resources["WashHi"] = b(p.Ink(38)); Resources["WashLo"] = b(p.Ink(10)); Resources["WashLine"] = b(p.Ink(42));
+            Resources["Track"] = b(p.Ink(51)); Resources["Thumb"] = b(p.Ink(64)); Resources["ThumbHi"] = b(p.Ink(128));
             Resources["Radius"] = new CornerRadius(6);
+            SetChromeInk(page == null);
+        }
+
+        // Botões da janela ficam por cima de tudo: no hub seguem a paleta (escuros na clara); na página do jogo, sempre claros
+        void SetChromeInk(bool hubVisible)
+        {
+            var p = HubPalette.Current;
+            var c = hubVisible && p.Light ? p.Muted : Color.FromRgb(0xC8, 0xC4, 0xBE);
+            var br = new SolidColorBrush(c); br.Freeze();
+            Resources["ChromeInk"] = br;
+        }
+
+        // Tinta translúcida (linhas, realces) e fundo da paleta com transparência
+        static Color Ink(byte a) { return HubPalette.Current.Ink(a); }
+        static Color Base(byte a) { return HubPalette.Current.Base(a); }
+
+        // Troca a paleta na hora: remonta o hub inteiro com as cores novas e volta para a mesma tela
+        void ChangePalette(string key)
+        {
+            Prefs.Set("hub_palette", key);
+            Prefs.Save();
+            string view = libraryView.Visibility == Visibility.Visible ? "lib" : exploreView.Visibility == Visibility.Visible ? "explore" : statsView.Visibility == Visibility.Visible ? "stats" : "home";
+            if (carTimer != null) carTimer.Stop();
+            int i = root.Children.IndexOf(hub);
+            hub = BuildHub();
+            root.Children.RemoveAt(i);   // trocar direto pelo índice não vale no WPF: tira o antigo e põe o novo no mesmo lugar
+            root.Children.Insert(i, hub);
+            libPath.Text = Prefs.LibraryRoot;
+            introDone = true;
+            RebuildCards();
+            if (pendingHubUpdate != null) ShowHubUpdate(pendingHubUpdate);
+            if (view != "home") ShowViewByKey(view);
         }
 
         // ================= Estrutura =================
@@ -55,16 +91,16 @@ namespace C2Launcher
 
             // Fundo: escuro liso e, por cima, a arte desfocada do jogo em destaque
             // Degradê (e não cor sólida) e nada abaixo de ~#111: tons quase pretos viravam manchas de preto puro na tela
-            g.Children.Add(new Rectangle { Fill = new LinearGradientBrush((Color)ColorConverter.ConvertFromString("#111113"), (Color)ColorConverter.ConvertFromString("#18181B"), 35) });
+            g.Children.Add(new Rectangle { Fill = new LinearGradientBrush(HubPalette.Current.Bg, HubPalette.Current.Bg2, 35) });
             // A arte já vem desfocada (Art.Blurred, uma vez só): desfoque ao vivo na janela inteira deixava tudo lento
             hubBgA = new Image { Stretch = Stretch.UniformToFill, Opacity = 0 };
             hubBgB = new Image { Stretch = Stretch.UniformToFill, Opacity = 0 };
             g.Children.Add(hubBgA); g.Children.Add(hubBgB);
             // Fundo calmo: só a arte desfocada do jogo em destaque sobre o escuro (sem manchas de cor)
-            g.Children.Add(new Rectangle { Fill = U.Solid(Color.FromArgb(130, 17, 17, 19)) });
+            g.Children.Add(new Rectangle { Fill = U.Solid(Base(130)) });
 
             var cols = new Grid();
-            cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(256) });
+            cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) });
             cols.ColumnDefinitions.Add(new ColumnDefinition());
             cols.Children.Add(BuildSidebar());
 
@@ -113,18 +149,16 @@ namespace C2Launcher
 
         FrameworkElement BuildSidebar()
         {
-            // Sem vidro: só uma linha fina separando do conteúdo
-            var bar = new Border { Background = U.Solid(Color.FromArgb(140, 17, 17, 19)), BorderBrush = U.Solid(Color.FromArgb(20, 255, 255, 255)), BorderThickness = new Thickness(0, 0, 1, 0) };
-            var d = new DockPanel { Margin = new Thickness(18, 20, 18, 18) };
+            // Barra de ícones (76 px): mais espaço para as capas; perfil e pasta da biblioteca ficam no topo e em Ajustes
+            var bar = new Border { Background = U.Solid(HubPalette.Current.Rail), BorderBrush = U.Solid(Ink(20)), BorderThickness = new Thickness(0, 0, 1, 0) };
+            var d = new DockPanel { Margin = new Thickness(0, 20, 0, 16) };
 
-            var logo = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0, 0, 28) };
-            var ico = AppIcon();
-            if (ico != null) logo.Children.Add(new Image { Source = ico, Width = 30, Height = 30, Margin = new Thickness(0, 0, 12, 0) });
-            logo.Children.Add(new TextBlock { Text = "Recomp Hub", FontSize = 19, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            var ico = HubPalette.Current.Logo(AppIcon());
+            var logo = new Image { Source = ico, Width = 32, Height = 32, Margin = new Thickness(0, 0, 0, 26), ToolTip = "Recomp Hub " + HubUpdate.CurrentLabel };
             DockPanel.SetDock(logo, Dock.Top);
             d.Children.Add(logo);
 
-            var nav = new StackPanel();
+            var nav = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
             nav.Children.Add(SideItem("home", "Início", "M4 11 L12 4 L20 11 M6.5 9 V20 H17.5 V9"));
             nav.Children.Add(SideItem("lib", "Biblioteca", "M4.5 4.5 H10.5 V10.5 H4.5 Z M13.5 4.5 H19.5 V10.5 H13.5 Z M4.5 13.5 H10.5 V19.5 H4.5 Z M13.5 13.5 H19.5 V19.5 H13.5 Z"));
             nav.Children.Add(SideItem("explore", "Explorar", "M12 3 A9 9 0 1 1 11.99 3 Z M15.5 8.5 L13.5 13.5 L8.5 15.5 L10.5 10.5 Z"));
@@ -132,35 +166,21 @@ namespace C2Launcher
             DockPanel.SetDock(nav, Dock.Top);
             d.Children.Add(nav);
 
-            // Rodapé: pasta da biblioteca e adicionar jogo
-            var foot = new Border { BorderBrush = U.Solid(Color.FromArgb(20, 255, 255, 255)), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(6, 16, 0, 0) };
-            var fs = new StackPanel();
-            fs.Children.Add(U.T("Pasta da biblioteca", 12, "Dim"));
-            libPath = U.T("", 14, "Text", FontWeights.SemiBold);
-            libPath.TextTrimming = TextTrimming.CharacterEllipsis; libPath.TextWrapping = TextWrapping.NoWrap; libPath.Margin = new Thickness(0, 2, 0, 10);
-            fs.Children.Add(libPath);
-            var fb = new UniformGrid { Columns = 2 };
-            var chg = new Button { Style = U.S("GhostButton"), Content = "Trocar", Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 4, 0), FontSize = 13 };
-            chg.Click += (s, e) => PickLibrary();
-            var add = new Button { Style = U.S("PrimaryButton"), Content = "+ Jogo", Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(4, 0, 0, 0), FontSize = 13, ToolTip = "Adicionar um jogo qualquer" };
+            // Pé: adicionar jogo e Ajustes (paleta, pasta da biblioteca, token do GitHub)
+            var foot = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+            var add = new Button { Style = U.S("PrimaryButton"), Width = 44, Height = 44, Padding = new Thickness(0), Content = U.Icon(Ico.Plus, 20), ToolTip = "Adicionar um jogo", Margin = new Thickness(0, 0, 0, 12) };
+            add.Resources["Radius"] = new CornerRadius(12);
             add.Click += (s, e) => ShowAddGame();
-            fb.Children.Add(chg); fb.Children.Add(add);
-            fs.Children.Add(fb);
-            var ver = U.T("Recomp Hub " + HubUpdate.CurrentLabel, 11, "Dim");
-            ver.Margin = new Thickness(0, 12, 0, 0);
-            fs.Children.Add(ver);
-            foot.Child = fs;
+            foot.Children.Add(add);
+            var cfg = new RadioButton { Style = U.S("RailNav"), Content = RailLabel("Ajustes", "M12 9 A3 3 0 1 1 11.99 9 Z M12 2.5 V5.5 M12 18.5 V21.5 M2.5 12 H5.5 M18.5 12 H21.5 M5.3 5.3 L7.4 7.4 M16.6 16.6 L18.7 18.7 M5.3 18.7 L7.4 16.6 M16.6 7.4 L18.7 5.3"),
+                GroupName = "cfg", Margin = new Thickness(0) };
+            cfg.Click += (s, e) => { cfg.IsChecked = false; ShowHubSettings(); };
+            foot.Children.Add(cfg);
             DockPanel.SetDock(foot, Dock.Bottom);
             d.Children.Add(foot);
-            // Perfil (nome e avatar), logo acima do rodapé
-            var prof = BuildProfileChip();
-            DockPanel.SetDock(prof, Dock.Bottom);
-            d.Children.Add(prof);
-            // Aviso de versão nova do hub (Welcome.cs), acima do perfil
-            hubUpdateBox = new Border { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 0, 14) };
-            DockPanel.SetDock(hubUpdateBox, Dock.Bottom);
-            d.Children.Add(hubUpdateBox);
 
+            // A pasta da biblioteca aparece em Ajustes; o texto continua sendo atualizado pelo Rescan
+            libPath = new TextBlock();
             // Sem "Acesso rápido": os jogos já aparecem em "Continuar jogando" e na Biblioteca
             quickList = new StackPanel();
             d.Children.Add(new Border());
@@ -168,21 +188,37 @@ namespace C2Launcher
             return bar;
         }
 
+        Ellipse libDot;
+
+        StackPanel RailLabel(string text, string icon)
+        {
+            var sp = new StackPanel();
+            var ic = U.Icon(icon, 20);
+            ic.HorizontalAlignment = HorizontalAlignment.Center;
+            sp.Children.Add(ic);
+            sp.Children.Add(new TextBlock { Text = text, FontSize = 11, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
+            return sp;
+        }
+
         RadioButton SideItem(string key, string text, string icon)
         {
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
-            var ic = U.Icon(icon, 20);
-            ic.Margin = new Thickness(0, 0, 14, 0);
-            sp.Children.Add(ic);
-            sp.Children.Add(new TextBlock { Text = text, FontSize = 16, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center });
-            var rb = new RadioButton { Style = U.S("SideNav"), Content = sp, GroupName = "side", IsChecked = key == "home" };
+            var content = new Grid();
+            content.Children.Add(RailLabel(text, icon));
+            // Bolinha na Biblioteca quando algum jogo tem versão nova
+            if (key == "lib")
+            {
+                libDot = new Ellipse { Width = 8, Height = 8, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, -3, 6, 0), Visibility = Visibility.Collapsed, ToolTip = "Há jogos com versão nova" };
+                libDot.SetResourceReference(Shape.FillProperty, "Brand");
+                content.Children.Add(libDot);
+            }
+            var rb = new RadioButton { Style = U.S("RailNav"), Content = content, GroupName = "side", IsChecked = key == "home", ToolTip = text };
             rb.Checked += (s, e) => ShowView(key);
             sideNav[key] = rb;
             return rb;
         }
 
         // Roteiro do teste das telas (--smoke): cada tela principal, os painéis que abrem por cima e uma página de jogo
-        public static readonly string[] SmokeSteps = { "home", "lib", "explore", "explore-all", "github", "stats", "banner", "profile-edit", "game" };
+        public static readonly string[] SmokeSteps = { "home", "lib", "explore", "explore-all", "github", "stats", "banner", "profile-edit", "settings", "palette", "game" };
 
         public void SmokeStep(string step)
         {
@@ -192,6 +228,8 @@ namespace C2Launcher
             if (step == "explore-all") { exploreMode = "all"; ShowViewByKey("explore"); RenderExplore(); }
             else if (step == "github") ShowGitHubToken();
             else if (step == "profile-edit") ShowProfileEditor();
+            else if (step == "settings") ShowHubSettings();
+            else if (step == "palette") { string was = HubPalette.Current.Key; ChangePalette(was == "terra" ? "neon" : "terra"); ChangePalette(was); }   // remonta o hub duas vezes
             else if (step == "game") { var g = games.FirstOrDefault(x => x.Installed) ?? games.FirstOrDefault(); if (g != null) OpenGame(g, null, null); }
             else ShowViewByKey(step);
         }
@@ -200,6 +238,7 @@ namespace C2Launcher
         {
             RadioButton rb;
             if (key == "profile") ShowProfileEditor();
+            else if (key == "settings") ShowHubSettings();
             else if (key == "banner") { ShowViewByKey("stats"); ShowBannerPicker(); }   // capturas sem clicar
             else if (key.StartsWith("game:")) { var gm = games.FirstOrDefault(x => x.Id == key.Substring(5)); if (gm != null) OpenGame(gm, null, null); }
             // "details:<nome>": abre o painel de detalhes do primeiro jogo do catálogo com esse nome (testes sem clicar)
@@ -248,9 +287,9 @@ namespace C2Launcher
 
         FrameworkElement BuildTopBar()
         {
-            var g = new Grid { Margin = new Thickness(36, 16, 0, 8) };
+            var g = new Grid { Margin = new Thickness(32, 16, 0, 8) };
             var box = new Grid { Width = 440, HorizontalAlignment = HorizontalAlignment.Left };
-            search = new TextBox { Padding = new Thickness(40, 10, 12, 10), FontSize = 15, Background = U.Solid(Color.FromArgb(14, 255, 255, 255)), BorderBrush = U.Solid(Color.FromArgb(22, 255, 255, 255)) };
+            search = new TextBox { Padding = new Thickness(40, 10, 12, 10), FontSize = 15, Background = U.Solid(Ink(14)), BorderBrush = U.Solid(Ink(22)) };
             WindowChrome.SetIsHitTestVisibleInChrome(search, true);
             var ph = searchHint = U.T("Buscar na biblioteca", 15, "Dim");
             ph.Margin = new Thickness(42, 0, 0, 0); ph.VerticalAlignment = VerticalAlignment.Center; ph.IsHitTestVisible = false;
@@ -270,6 +309,15 @@ namespace C2Launcher
             };
             box.Children.Add(search); box.Children.Add(ph); box.Children.Add(mag);
             g.Children.Add(box);
+            // À direita (antes dos botões da janela): aviso de versão nova do hub e o perfil
+            var right = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 160, 0) };
+            hubUpdateBox = new Border { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center };
+            WindowChrome.SetIsHitTestVisibleInChrome(hubUpdateBox, true);
+            right.Children.Add(hubUpdateBox);
+            var prof = BuildProfileChip();
+            WindowChrome.SetIsHitTestVisibleInChrome(prof, true);
+            right.Children.Add(prof);
+            g.Children.Add(right);
             return g;
         }
 
@@ -283,6 +331,8 @@ namespace C2Launcher
             RebuildCards();
             FetchArt();
             CheckUpdates();
+            RefreshFixes();
+            CheckLaunchers();
             // "Quero jogar": confere as novidades na abertura (só se houver jogo marcado)
             if (!wishChecked && Wishlist().Count > 0)
             {
@@ -294,6 +344,13 @@ namespace C2Launcher
         }
 
         bool wishChecked;
+
+        // Correções conhecidas: a lista do site chega depois da abertura; com novidade, os cartões ganham o aviso
+        async void RefreshFixes()
+        {
+            if (await Fixes.Refresh().ConfigureAwait(false))
+                Dispatcher.Invoke((Action)(() => { if (page == null) RebuildCards(); }));
+        }
 
         // Versões novas no GitHub: quando muda algo, os cartões ganham o aviso
         async void CheckUpdates()
@@ -358,13 +415,14 @@ namespace C2Launcher
         {
             var cv = Art.Load(ArtCache.Cover(g), 600);
             double w = h * cv.PixelWidth / Math.Max(1.0, cv.PixelHeight);
-            return new Border { Width = w, Height = h, CornerRadius = new CornerRadius(4), Background = new ImageBrush(cv) { Stretch = Stretch.UniformToFill }, BorderBrush = U.Solid(Color.FromArgb(40, 255, 255, 255)), BorderThickness = new Thickness(1),
+            return new Border { Width = w, Height = h, CornerRadius = new CornerRadius(4), Background = new ImageBrush(cv) { Stretch = Stretch.UniformToFill }, BorderBrush = U.Solid(Ink(40)), BorderThickness = new Thickness(1),
                 Effect = new DropShadowEffect { BlurRadius = 24, ShadowDepth = 6, Opacity = 0.5 }, IsHitTestVisible = false };
         }
 
         string Sub(GameDef g)
         {
             if (!g.Installed) return g.Installable ? "Pronto para instalar" : "Não encontrado";
+            if (Fixes.For(g).Count > 0) return "⚠ Correção disponível  ·  abra a página";
             if (Updates.Available(g, Prefs)) return "Nova versão  ·  " + Updates.Label(Updates.Latest(g).Tag);
             long last = Prefs.GetLong(g.Id + ".last_session"), secs = Prefs.GetLong(g.Id + ".play_seconds");
             return last > 0 ? U.Ago(new DateTime(last)) + "  ·  " + U.Duration(secs) : "Pronto para jogar";
@@ -399,18 +457,18 @@ namespace C2Launcher
                 row.ColumnDefinitions.Add(new ColumnDefinition());
                 var th = Thumb(g);
                 var thumb = new Border { Width = 40, Height = 40, CornerRadius = new CornerRadius(9), Background = new ImageBrush(th) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top },
-                    BorderBrush = U.Solid(Color.FromArgb(40, 255, 255, 255)), BorderThickness = new Thickness(1) };
+                    BorderBrush = U.Solid(Ink(40)), BorderThickness = new Thickness(1) };
                 row.Children.Add(thumb);
                 var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
                 info.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-                info.Children.Add(new TextBlock { Text = g.Platform, FontSize = 12, Foreground = U.Solid(Color.FromArgb(150, 255, 255, 255)) });
+                info.Children.Add(new TextBlock { Text = g.Platform, FontSize = 12, Foreground = U.Solid(Ink(150)) });
                 Grid.SetColumn(info, 1);
                 row.Children.Add(info);
                 var bg = new Border { Child = row, CornerRadius = new CornerRadius(10), Padding = new Thickness(6), Background = Brushes.Transparent };
                 var b = new Button { Style = U.S("BareButton"), Content = bg, ToolTip = "Abrir " + (g.FullName ?? g.Title) };
-                b.MouseEnter += (s, e) => { bg.Background = U.Solid(Color.FromArgb(20, 255, 255, 255)); ShowHubBackground(gg); };
+                b.MouseEnter += (s, e) => { bg.Background = U.Solid(Ink(20)); ShowHubBackground(gg); };
                 b.MouseLeave += (s, e) => bg.Background = Brushes.Transparent;
-                b.GotKeyboardFocus += (s, e) => bg.Background = U.Solid(Color.FromArgb(20, 255, 255, 255));
+                b.GotKeyboardFocus += (s, e) => bg.Background = U.Solid(Ink(20));
                 b.LostKeyboardFocus += (s, e) => bg.Background = Brushes.Transparent;
                 b.Click += (s, e) => OpenGame(gg, thumb, null);
                 quickList.Children.Add(b);
@@ -438,18 +496,42 @@ namespace C2Launcher
             RefreshNews();
 
             var installed = games.Where(x => x.Installed).ToList();
+            if (libDot != null) libDot.Visibility = installed.Any(x => Updates.Available(x, Prefs)) ? Visibility.Visible : Visibility.Collapsed;
             if (installed.Count > 0)
             {
+                // Vitrine: os 4 últimos jogados lado a lado (a largura se divide entre eles), o resto fica na Biblioteca
                 homeBody.Children.Add(SectionHeader("Continuar jogando", installed.Count, () => sideNav["lib"].IsChecked = true));
-                // folga em volta para o cartão focado crescer sem ser cortado pela rolagem
-                var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 16, 12, 10) };
-                foreach (var g in installed) row.Children.Add(ResumeCard(g));
-                var sv = new ScrollViewer { Content = row, HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, Focusable = false, Margin = new Thickness(-12, -16, -12, -10) };
-                sv.PreviewMouseWheel += (s, e) => { if (row.ActualWidth > sv.ActualWidth) { sv.ScrollToHorizontalOffset(sv.HorizontalOffset - e.Delta); e.Handled = true; } };
-                homeBody.Children.Add(ScrollEdges(sv));
+                var row = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+                var four = installed.Take(4).ToList();
+                for (int i = 0; i < 4; i++) row.ColumnDefinitions.Add(new ColumnDefinition());
+                for (int i = 0; i < four.Count; i++)
+                {
+                    var c = VitrineCard(four[i]);
+                    c.Margin = new Thickness(i == 0 ? 0 : 8, 0, i == 3 ? 0 : 8, 0);
+                    Grid.SetColumn(c, i);
+                    row.Children.Add(c);
+                }
+                homeBody.Children.Add(row);
             }
 
-            else
+            // Em alta: os projetos mais estrelados do catálogo (estrelas do catalogo.json, atualizado toda semana)
+            var trend = TrendingProjects(5);
+            if (trend.Count > 0)
+            {
+                homeBody.Children.Add(SectionHeader("Em alta no mundo recomp", -1, () => { exploreSort = "pop"; sideNav["explore"].IsChecked = true; }));
+                var tr = new Grid();
+                for (int i = 0; i < 5; i++) tr.ColumnDefinitions.Add(new ColumnDefinition());
+                for (int i = 0; i < trend.Count; i++)
+                {
+                    var c = TrendCard(trend[i]);
+                    c.Margin = new Thickness(i == 0 ? 0 : 7, 0, i == 4 ? 0 : 7, 0);
+                    Grid.SetColumn(c, i);
+                    tr.Children.Add(c);
+                }
+                homeBody.Children.Add(tr);
+            }
+
+            if (installed.Count == 0)
             {
                 // Nada instalado ainda: aí sim mostra a biblioteca no início
                 homeBody.Children.Add(SectionHeader("Sua biblioteca", games.Count, () => sideNav["lib"].IsChecked = true));
@@ -469,8 +551,8 @@ namespace C2Launcher
             Func<bool, Rectangle> fade = isLeft =>
             {
                 var gb = new LinearGradientBrush { StartPoint = new Point(isLeft ? 1 : 0, 0), EndPoint = new Point(isLeft ? 0 : 1, 0) };
-                gb.GradientStops.Add(new GradientStop(Color.FromArgb(0, 17, 17, 19), 0));
-                gb.GradientStops.Add(new GradientStop(Color.FromArgb(225, 17, 17, 19), 1));
+                gb.GradientStops.Add(new GradientStop(Base(0), 0));
+                gb.GradientStops.Add(new GradientStop(Base(225), 1));
                 return new Rectangle { Width = 90, Fill = gb, IsHitTestVisible = false, HorizontalAlignment = isLeft ? HorizontalAlignment.Left : HorizontalAlignment.Right, Margin = new Thickness(-12, -16, -12, -10), Visibility = Visibility.Collapsed };
             };
             var fl = fade(true); var fr = fade(false);
@@ -481,7 +563,7 @@ namespace C2Launcher
             foreach (var b in new[] { left, right })
             {
                 b.Width = 40; b.Height = 40; b.Resources["Radius"] = new CornerRadius(20);
-                b.Background = U.Solid(Color.FromArgb(200, 17, 17, 19));
+                b.Background = U.Solid(Base(200));
                 b.VerticalAlignment = VerticalAlignment.Top; b.Margin = new Thickness(-6, 64, -6, 0); b.Visibility = Visibility.Collapsed;
                 host.Children.Add(b);
             }
@@ -529,9 +611,12 @@ namespace C2Launcher
             // Título e contagem em texto simples (sem pílula)
             var t = new StackPanel { Orientation = Orientation.Horizontal };
             t.Children.Add(new TextBlock { Text = title, FontSize = 20, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-            var cnt = U.T(count.ToString(), 15, "Dim");
-            cnt.Margin = new Thickness(10, 2, 0, 0); cnt.VerticalAlignment = VerticalAlignment.Center;
-            t.Children.Add(cnt);
+            if (count >= 0)
+            {
+                var cnt = U.T(count.ToString(), 15, "Dim");
+                cnt.Margin = new Thickness(10, 2, 0, 0); cnt.VerticalAlignment = VerticalAlignment.Center;
+                t.Children.Add(cnt);
+            }
             d.Children.Add(t);
             return d;
         }
@@ -544,7 +629,7 @@ namespace C2Launcher
             bool coverOnly = OnlyCover(g);
             if (coverOnly) art = Art.Blurred(Art.Load(ArtCache.Cover(g), 600), 640, 360);
             var img = new Border { Width = W, Height = H, CornerRadius = new CornerRadius(6), Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill },
-                BorderBrush = U.Solid(Color.FromArgb(24, 255, 255, 255)), BorderThickness = new Thickness(1) };
+                BorderBrush = U.Solid(Ink(24)), BorderThickness = new Thickness(1) };
             // Só a arte e o logo: sem selo de plataforma nem ícone no canto
             var over = new Grid();
             var shade = new LinearGradientBrush(Color.FromArgb(0, 0, 0, 0), Color.FromArgb(150, 0, 0, 0), 90);
@@ -575,13 +660,136 @@ namespace C2Launcher
             return new Border { Child = st, Margin = new Thickness(0, 0, 20, 0) };
         }
 
+        // Cartão da Vitrine (início): arte, botão Jogar redondo sobre a borda da arte, nome, último acesso e conquistas
+        FrameworkElement VitrineCard(GameDef g)
+        {
+            var art = Art.For(g, Prefs.Get(g.Id + ".hero_image"), 640);
+            bool coverOnly = OnlyCover(g);
+            if (coverOnly) art = Art.Blurred(Art.Load(ArtCache.Cover(g), 600), 640, 360);
+            var img = new Border { Height = 160, CornerRadius = new CornerRadius(12, 12, 0, 0), Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill }, ClipToBounds = true };
+            var over = new Grid();
+            over.Children.Add(new Border { CornerRadius = new CornerRadius(12, 12, 0, 0), Background = new LinearGradientBrush(Color.FromArgb(0, 0, 0, 0), Color.FromArgb(120, 0, 0, 0), 90) });
+            if (coverOnly) { var box = CoverBox(g, 120); box.HorizontalAlignment = HorizontalAlignment.Center; box.VerticalAlignment = VerticalAlignment.Center; over.Children.Add(box); }
+            var logoPath = ArtCache.Logo(g);
+            if (logoPath != null) over.Children.Add(new Image { Source = Art.Load(logoPath, 500), MaxHeight = 54, MaxWidth = 180, Margin = new Thickness(14, 14, 60, 14), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Bottom,
+                Effect = new DropShadowEffect { BlurRadius = 12, ShadowDepth = 0, Opacity = 0.8 } });
+            img.Child = over;
+            var open = new Button { Style = U.S("BareButton"), Content = img, ToolTip = "Abrir " + (g.FullName ?? g.Title) };
+            open.Click += (s, e) => OpenGame(g, img, null);
+
+            var info = new StackPanel { Margin = new Thickness(14, 12, 14, 14) };
+            info.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 15, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 0, 50, 0) });
+            var sub = SubText(g); sub.FontSize = 12.5; sub.TextTrimming = TextTrimming.CharacterEllipsis;
+            info.Children.Add(sub);
+            // Conquistas: contagem e barra (sem conquistas, a barra some e fica só o tempo de jogo)
+            AchievementSet a = null;
+            try { a = g.LoadAchievements(); } catch { }
+            if (a != null && a.Total > 0)
+            {
+                var ach = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+                int pct = (int)Math.Round(100.0 * a.UnlockedCount / a.Total);
+                var pc = U.T(pct + "%", 12, "Dim");
+                DockPanel.SetDock(pc, Dock.Right);
+                ach.Children.Add(pc);
+                var cnt = new StackPanel { Orientation = Orientation.Horizontal };
+                cnt.Children.Add(U.Icon(Ico.Trophy, 14, "Brand"));
+                var ct = new TextBlock { Text = a.UnlockedCount + "/" + a.Total, FontSize = 12, FontWeight = FontWeights.SemiBold, Margin = new Thickness(5, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                ct.SetResourceReference(TextBlock.ForegroundProperty, "Brand");
+                cnt.Children.Add(ct);
+                ach.Children.Add(cnt);
+                info.Children.Add(ach);
+                var track = new Grid { Height = 4, Margin = new Thickness(0, 6, 0, 0) };
+                track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(0.001, a.UnlockedCount), GridUnitType.Star) });
+                track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(0.001, a.Total - a.UnlockedCount), GridUnitType.Star) });
+                var bg = new Border { CornerRadius = new CornerRadius(2) }; bg.SetResourceReference(Border.BackgroundProperty, "Track"); Grid.SetColumnSpan(bg, 2);
+                var fill = new Border { CornerRadius = new CornerRadius(2) }; fill.SetResourceReference(Border.BackgroundProperty, "Brand");
+                track.Children.Add(bg); track.Children.Add(fill);
+                info.Children.Add(track);
+            }
+
+            var st = new StackPanel();
+            st.Children.Add(open);
+            st.Children.Add(info);
+            var host = new Grid();
+            var frame = new Border { Child = st, CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1) };
+            frame.SetResourceReference(Border.BackgroundProperty, "WashLo");
+            frame.SetResourceReference(Border.BorderBrushProperty, "Line");
+            host.Children.Add(frame);
+            // Jogar: círculo na cor do jogo, metade sobre a arte
+            var play = new Button { Style = U.S("PrimaryButton"), Width = 44, Height = 44, Padding = new Thickness(0), Background = U.Solid(g.Theme.Accent), Foreground = U.Solid(g.Theme.OnAccent),
+                Content = U.Icon(Ico.Play, 16, null, true, 0), ToolTip = g.Installed ? "Jogar" : "Instalar", HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 138, 12, 0),
+                Effect = new DropShadowEffect { BlurRadius = 16, ShadowDepth = 4, Opacity = 0.5 } };
+            play.Resources["Radius"] = new CornerRadius(22);
+            play.Click += (s, e) => OpenGame(g, img, null, true);
+            host.Children.Add(play);
+            Hover(open, img, g);
+            return host;
+        }
+
+        // Projetos mais estrelados do catálogo, um por jogo; sem dados de estrelas, os mais recentes
+        List<NewsItem> TrendingProjects(int count)
+        {
+            var src = (catalog ?? News.CatalogCached()).Where(n => !string.IsNullOrEmpty(n.Repo) && News.Match(n, games) == null).ToList();
+            var seen = new HashSet<string>();
+            var ordered = src.Any(n => StarsFor(n) > 0) ? src.OrderByDescending(StarsFor) : src.OrderByDescending(n => n.When ?? DateTime.MinValue);
+            var list = new List<NewsItem>();
+            foreach (var n in ordered)
+            {
+                if (!seen.Add(News.TitleKey(n.Title))) continue;
+                list.Add(n);
+                if (list.Count == count) break;
+            }
+            return list;
+        }
+
+        static string StarsText(int s) { return s >= 1000 ? (s / 1000.0).ToString("0.#", CultureInfo.GetCultureInfo("pt-BR")) + " mil" : s.ToString(); }
+
+        FrameworkElement TrendCard(NewsItem n)
+        {
+            var img = new Border { Height = 104, CornerRadius = new CornerRadius(10, 10, 0, 0), Background = U.Solid(Ink(18)) };
+            if (File.Exists(n.ThumbPath)) SetThumb(img, n.ThumbPath); else { Pulse(img); LoadThumb(n, img); }
+            var over = new Grid();
+            over.Children.Add(img);
+            if (!string.IsNullOrEmpty(n.Console))
+                over.Children.Add(new Border { Child = new TextBlock { Text = n.Console, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White }, Background = U.Solid(Color.FromArgb(170, 0, 0, 0)),
+                    CornerRadius = new CornerRadius(5), Padding = new Thickness(7, 3, 7, 3), Margin = new Thickness(8), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false });
+            var info = new StackPanel { Margin = new Thickness(10, 8, 10, 10) };
+            info.Children.Add(new TextBlock { Text = CleanTitle(n.Title), FontSize = 13.5, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+            var meta = new DockPanel();
+            int stars = StarsFor(n);
+            if (stars > 0)
+            {
+                var st = new TextBlock { Text = "★ " + StarsText(stars), FontSize = 12, FontWeight = FontWeights.SemiBold };
+                st.SetResourceReference(TextBlock.ForegroundProperty, "Brand");
+                DockPanel.SetDock(st, Dock.Right);
+                meta.Children.Add(st);
+            }
+            var genre = News.GenresOf(n).FirstOrDefault();
+            var gt = U.T(genre ?? (n.When.HasValue ? Lower(U.Ago(n.When.Value)) : ""), 12, "Muted");
+            gt.TextTrimming = TextTrimming.CharacterEllipsis;
+            meta.Children.Add(gt);
+            info.Children.Add(meta);
+            var st2 = new StackPanel();
+            st2.Children.Add(over);
+            st2.Children.Add(info);
+            var frame = new Border { Child = st2, CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), ClipToBounds = true };
+            frame.SetResourceReference(Border.BackgroundProperty, "WashLo");
+            frame.SetResourceReference(Border.BorderBrushProperty, "Line");
+            var b = new Button { Style = U.S("BareButton"), Content = frame, ToolTip = "Ver detalhes do projeto" };
+            b.Click += (s, e) => ShowProjectDetails(n);
+            b.MouseEnter += (s, e) => frame.SetResourceReference(Border.BorderBrushProperty, "WashLine");
+            b.MouseLeave += (s, e) => frame.SetResourceReference(Border.BorderBrushProperty, "Line");
+            return b;
+        }
+
         // Capa em pé (biblioteca)
-        FrameworkElement CoverCard(GameDef g, double w)
+        // lib = capa da Biblioteca: selo de estado no canto, faixa de conquistas no pé e o subtítulo em duas linhas
+        FrameworkElement CoverCard(GameDef g, double w, bool lib = false)
         {
             double h = w * 1.43;
             var coverPath = ArtCache.Cover(g);
             var cover = coverPath != null ? Art.Load(coverPath, 600) : null;
-            var frame = new Border { Width = w, Height = h, CornerRadius = new CornerRadius(6), BorderBrush = U.Solid(Color.FromArgb(24, 255, 255, 255)), BorderThickness = new Thickness(1) };
+            var frame = new Border { Width = w, Height = h, CornerRadius = new CornerRadius(10), BorderBrush = U.Solid(Ink(24)), BorderThickness = new Thickness(1) };
             if (cover != null) frame.Background = new ImageBrush(cover) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top };
             else
             {
@@ -589,6 +797,23 @@ namespace C2Launcher
                 var t = g.Theme;
                 frame.Child = new Viewbox { Child = new TextBlock { Text = g.Title, FontFamily = t.Display, FontWeight = FontWeights.Bold, FontSize = 32, Foreground = U.Solid(t.Text) }, StretchDirection = StretchDirection.DownOnly,
                     Margin = new Thickness(14), VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Left };
+            }
+            AchievementSet libA = null;
+            if (lib)
+            {
+                libAch.TryGetValue(g.Id, out libA);
+                var layer = new Grid();
+                if (frame.Child != null) { var c = frame.Child; frame.Child = null; layer.Children.Add(c); }
+                var state = LibState(g, libA);
+                if (state != null) { var badge = StateBadge(state); badge.Margin = new Thickness(8); badge.HorizontalAlignment = HorizontalAlignment.Left; badge.VerticalAlignment = VerticalAlignment.Top; layer.Children.Add(badge); }
+                if (libA != null && libA.Total > 0 && libA.UnlockedCount > 0)
+                {
+                    var bar = (Grid)Bar(libA.UnlockedCount, libA.Total, false);
+                    bar.Height = 3; bar.VerticalAlignment = VerticalAlignment.Bottom; bar.Margin = new Thickness(8, 0, 8, 8);
+                    var track = new Border { Height = 3, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(8, 0, 8, 8), CornerRadius = new CornerRadius(1.5), Background = U.Solid(Color.FromArgb(110, 0, 0, 0)) };
+                    layer.Children.Add(track); layer.Children.Add(bar);
+                }
+                frame.Child = layer;
             }
             if (!g.Installed) frame.Opacity = 0.55;
             var st = new StackPanel { Width = w };
@@ -599,10 +824,102 @@ namespace C2Launcher
             Hover(b, frame, g);
             st.Children.Add(b);
             st.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 15, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(2, 10, 0, 0) });
+            if (lib)
+            {
+                // Duas linhas em vez de "há 2 dias · 3 h": o tempo de jogo e, embaixo, quando foi a última vez
+                long secs = Prefs.GetLong(g.Id + ".play_seconds"), last = Prefs.GetLong(g.Id + ".last_session");
+                var l1 = Note(!g.Installed ? Sub(g) : secs > 0 ? U.Duration(secs) : "Ainda não jogado");
+                l1.SetResourceReference(TextBlock.ForegroundProperty, "Muted"); l1.Margin = new Thickness(2, 1, 0, 0);
+                st.Children.Add(l1);
+                if (g.Installed && last > 0) { var l2 = Note(U.Ago(new DateTime(last))); l2.Margin = new Thickness(2, 0, 0, 0); st.Children.Add(l2); }
+                return new Border { Child = st, Margin = new Thickness(0, 0, 20, 22) };
+            }
             var sub = SubText(g);
             sub.TextTrimming = TextTrimming.CharacterEllipsis; sub.TextWrapping = TextWrapping.NoWrap; sub.Margin = new Thickness(2, 1, 0, 0);
             st.Children.Add(sub);
             return new Border { Child = st, Margin = new Thickness(0, 0, 20, 22) };
+        }
+
+        // ---------- Estado de cada jogo na Biblioteca (selo da capa e coluna da lista) ----------
+        Dictionary<string, AchievementSet> libAch = new Dictionary<string, AchievementSet>();
+
+        // O que pede atenção, o mais importante primeiro: { texto, glifo (Segoe MDL2), cor do tema }; null = nada
+        string[] LibState(GameDef g, AchievementSet a)
+        {
+            if (!g.Installed) return null;
+            try
+            {
+                var fn = GameFiles.Check(g);
+                var dn = fn == null ? GameData.Check(g, Prefs.LibraryRoot) : null;
+                if (dn != null && dn.Kind == "iso" && Prefs.GetLong(g.Id + ".play_seconds") >= 120) dn = null;   // já roda sem extrair: usa a ISO direto
+                if (fn != null || dn != null) return new[] { "Falta o jogo", "", "Warn" };
+            }
+            catch { }
+            if (Updates.Available(g, Prefs)) return new[] { "Atualização", "", "Accent" };
+            if (FirstCompile.Pending(g)) return new[] { "1ª abertura demora", "", "Muted" };
+            if (a != null && a.Total > 0 && a.UnlockedCount == a.Total) return new[] { "100%", "", "Ok" };
+            return null;
+        }
+
+        // Selo de estado: ícone + texto (nunca só a cor), não clicável; "Atualização" vai na cor de destaque
+        FrameworkElement StateBadge(string[] st)
+        {
+            bool accent = st[2] == "Accent";
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            var ic = new TextBlock { Text = st[1], FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 1, 5, 0) };
+            ic.SetResourceReference(TextBlock.ForegroundProperty, accent ? "OnAccent" : st[2]);
+            sp.Children.Add(ic);
+            var tx = new TextBlock { Text = st[0], FontSize = 11, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.NoWrap };
+            tx.SetResourceReference(TextBlock.ForegroundProperty, accent ? "OnAccent" : "Text");
+            sp.Children.Add(tx);
+            var b = new Border { Child = sp, CornerRadius = new CornerRadius(4), Padding = new Thickness(7, 3, 8, 4), IsHitTestVisible = false };
+            if (accent) b.SetResourceReference(Border.BackgroundProperty, "Accent"); else b.Background = U.Solid(Color.FromArgb(220, 17, 17, 19));
+            return b;
+        }
+
+        // Linha do modo lista: capa, nome e console | tempo | última vez | conquistas | estado | Abrir
+        FrameworkElement LibraryRow(GameDef g)
+        {
+            AchievementSet a; libAch.TryGetValue(g.Id, out a);
+            long secs = Prefs.GetLong(g.Id + ".play_seconds"), last = Prefs.GetLong(g.Id + ".last_session");
+            var row = LibraryColumns();
+            var name = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            var img = new Border { Width = 34, Height = 48, CornerRadius = new CornerRadius(4), Margin = new Thickness(0, 0, 14, 0), Background = U.Solid(Ink(18)) };
+            var cp = ArtCache.Cover(g); var cov = cp != null ? Art.Load(cp, 120) : Thumb(g);
+            if (cov != null) img.Background = new ImageBrush(cov) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top };
+            name.Children.Add(img);
+            var nt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            nt.Children.Add(new TextBlock { Text = g.FullName ?? g.Title, FontSize = 15, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+            nt.Children.Add(Note(g.Platform));
+            name.Children.Add(nt);
+            row.Children.Add(name);
+            Action<int, FrameworkElement> put = (col, el) => { el.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(el, col); row.Children.Add(el); };
+            put(1, U.T(!g.Installed ? "—" : secs > 0 ? U.Duration(secs) : "Ainda não jogado", 14, secs > 0 ? "Text" : "Dim"));
+            put(2, U.T(last > 0 ? U.Ago(new DateTime(last)) : "—", 14, "Muted"));
+            if (a != null && a.Total > 0) { var m = Meter(a.UnlockedCount, a.Total, a.UnlockedCount + " / " + a.Total); ((FrameworkElement)m).Margin = new Thickness(0, 0, 24, 0); put(3, m); } else put(3, U.T("—", 14, "Dim"));
+            var state = LibState(g, a);
+            if (state != null) { var sb = StateBadge(state); sb.HorizontalAlignment = HorizontalAlignment.Left; put(4, sb); }
+            var open = new Button { Style = U.S("GhostButton"), Content = g.Installed ? "Abrir" : "Ver", Padding = new Thickness(16, 6, 16, 6), HorizontalAlignment = HorizontalAlignment.Right };
+            open.Click += (s, e) => OpenGame(g, null, null);
+            put(5, open);
+            var bg = new Border { Child = row, Padding = new Thickness(12, 8, 12, 8), CornerRadius = new CornerRadius(6), Background = Brushes.Transparent, Opacity = g.Installed ? 1 : 0.6 };
+            var b = new Button { Style = U.S("BareButton"), Content = bg, HorizontalContentAlignment = HorizontalAlignment.Stretch, ToolTip = (g.FullName ?? g.Title) + "\nBotão direito: tags" };
+            b.MouseEnter += (s, e) => bg.Background = U.Solid(Ink(14));
+            b.MouseLeave += (s, e) => bg.Background = Brushes.Transparent;
+            b.GotKeyboardFocus += (s, e) => bg.Background = U.Solid(Ink(14));
+            b.LostKeyboardFocus += (s, e) => bg.Background = Brushes.Transparent;
+            b.Click += (s, e) => OpenGame(g, null, null);
+            b.MouseRightButtonUp += (s, e) => { ShowTagMenu(g, b); e.Handled = true; };
+            return b;
+        }
+
+        // As mesmas colunas no cabeçalho e nas linhas, para tudo ficar alinhado
+        static Grid LibraryColumns()
+        {
+            var g = new Grid();
+            foreach (var w in new[] { new GridLength(1, GridUnitType.Star), new GridLength(130), new GridLength(120), new GridLength(170), new GridLength(170), new GridLength(84) })
+                g.ColumnDefinitions.Add(new ColumnDefinition { Width = w });
+            return g;
         }
 
         FrameworkElement AddTile(double w)
@@ -616,7 +933,7 @@ namespace C2Launcher
             t.Margin = new Thickness(0, 10, 0, 0); t.HorizontalAlignment = HorizontalAlignment.Center;
             sp.Children.Add(t);
             var g = new Grid { Width = w, Height = h, Background = Brushes.Transparent };
-            g.Children.Add(new Rectangle { StrokeDashArray = new DoubleCollection { 4, 4 }, StrokeThickness = 1.4, RadiusX = 6, RadiusY = 6, Stroke = U.Solid(Color.FromArgb(55, 255, 255, 255)) });
+            g.Children.Add(new Rectangle { StrokeDashArray = new DoubleCollection { 4, 4 }, StrokeThickness = 1.4, RadiusX = 6, RadiusY = 6, Stroke = U.Solid(Ink(55)) });
             g.Children.Add(sp);
             var b = new Button { Style = U.S("BareButton"), Content = g, ToolTip = "Qualquer executável: o hub cuida do tempo de jogo, dos saves e do atalho." };
             b.Click += (s, e) => ShowAddGame();
@@ -675,6 +992,31 @@ namespace C2Launcher
         {
             Prefs.Set(g.Id + ".tags", string.Join("|", tags.Select(t => t.Replace("|", "").Trim()).Where(t => t != "").Distinct(StringComparer.CurrentCultureIgnoreCase).ToArray()));
             if (libraryView.Visibility == Visibility.Visible) RenderLibrary();
+        }
+
+        // Botão "Rótulo: valor ▾" que abre um menu com as opções (opts: chave, texto); o escolhido ganha ✓
+        Button DropMenu(string label, string value, List<string[]> opts, string current, Action<string> pick)
+        {
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            sp.Children.Add(U.T(label + ":  ", 14, "Muted"));
+            sp.Children.Add(new TextBlock { Text = value, FontSize = 14, FontWeight = FontWeights.SemiBold });
+            var chev = U.Icon("M7 10 L12 15 L17 10", 14);
+            chev.Margin = new Thickness(8, 1, 0, 0); chev.VerticalAlignment = VerticalAlignment.Center;
+            sp.Children.Add(chev);
+            var b = new Button { Style = U.S("GhostButton"), Content = sp, Padding = new Thickness(14, 7, 12, 7), Margin = new Thickness(8, 0, 0, 0) };
+            b.Click += (s, e) =>
+            {
+                var m = new ContextMenu { PlacementTarget = b, Placement = PlacementMode.Bottom, FontFamily = Fonts2.Hub };
+                foreach (var o in opts)
+                {
+                    string k = o[0];
+                    var mi = new MenuItem { Header = (k == current ? "✓   " : "      ") + o[1] };
+                    mi.Click += (s2, e2) => { if (k != current) pick(k); };
+                    m.Items.Add(mi);
+                }
+                m.IsOpen = true;
+            };
+            return b;
         }
 
         void ShowTagMenu(GameDef g, FrameworkElement anchor)
@@ -745,20 +1087,57 @@ namespace C2Launcher
         {
             libraryBody.Children.Clear();
             string q = search.Text.Trim();
-            var head = new DockPanel { Margin = new Thickness(0, 8, 0, 16) };
-            var chips = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            string libSort = Prefs.Get("lib_sort", "recent"), libView = Prefs.Get("lib_view", "grid");
+
+            // Título | ordem e grade/lista (a escolha fica salva)
+            var head = new DockPanel { Margin = new Thickness(0, 8, 0, 14) };
+            var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var so in new[] { new[] { "recent", "Jogados recentemente" }, new[] { "played", "Mais jogados" }, new[] { "az", "A–Z" } })
+            {
+                var key = so[0];
+                var rb = new RadioButton { Style = U.S("Segment"), Content = so[1], GroupName = "libs", IsChecked = libSort == key, Margin = new Thickness(6, 0, 0, 0) };
+                rb.Checked += (s, e) => { Prefs.Set("lib_sort", key); RenderLibrary(); };
+                tools.Children.Add(rb);
+            }
+            tools.Children.Add(new Border { Width = 1, Height = 22, Margin = new Thickness(14, 0, 8, 0), Background = U.Solid(Ink(40)) });
+            foreach (var vw in new[] { new[] { "grid", "", "Grade de capas" }, new[] { "list", "", "Lista com detalhes" } })
+            {
+                var key = vw[0];
+                var rb = new RadioButton { Style = U.S("Segment"), GroupName = "libv", IsChecked = libView == key, Margin = new Thickness(6, 0, 0, 0), ToolTip = vw[2],
+                    Content = new TextBlock { Text = vw[1], FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 14 } };
+                System.Windows.Automation.AutomationProperties.SetName(rb, vw[2]);   // botão só com ícone: o nome vai para leitores de tela
+                rb.Checked += (s, e) => { Prefs.Set("lib_view", key); RenderLibrary(); };
+                tools.Children.Add(rb);
+            }
+            DockPanel.SetDock(tools, Dock.Right);
+            head.Children.Add(tools);
+            // Várias versões novas de uma vez: um botão só atualiza todas, em sequência
+            int pend = games.Count(x => x.Installed && Updates.Available(x, Prefs));
+            if (pend > 0 && q.Length == 0)
+            {
+                var all = new Button { Style = U.S("PrimaryButton"), Padding = new Thickness(16, 7, 16, 7), Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Center, ToolTip = "Baixa e instala as versões novas, uma de cada vez (com backup dos saves)" };
+                var ac = new StackPanel { Orientation = Orientation.Horizontal };
+                ac.Children.Add(U.Icon("M12 4 V15 M7 10 L12 15 L17 10 M5 20 H19", 16));
+                ac.Children.Add(new TextBlock { Text = pend == 1 ? "Atualizar 1 jogo" : "Atualizar tudo (" + pend + ")", FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+                all.Content = ac;
+                all.Click += (s, e) => UpdateAll();
+                DockPanel.SetDock(all, Dock.Right);
+                head.Children.Add(all);
+            }
+            head.Children.Add(new TextBlock { Text = q.Length > 0 ? "Resultados para \"" + q + "\"" : "Biblioteca", FontSize = 30, FontWeight = FontWeights.Bold });
+            libraryBody.Children.Add(head);
+
+            // Plataformas
+            var chips = new WrapPanel { Margin = new Thickness(0, 0, 0, 14) };
             var plats = new[] { "Todos" }.Concat(games.Select(x => x.Platform).Distinct().OrderBy(x => x)).ToList();
             foreach (var p in plats)
             {
                 var pp = p;
-                var rb = new RadioButton { Style = U.S("Segment"), Content = pp, GroupName = "libf", IsChecked = pp == libFilter, Margin = new Thickness(0, 0, 6, 0) };
+                var rb = new RadioButton { Style = U.S("Segment"), Content = pp, GroupName = "libf", IsChecked = pp == libFilter, Margin = new Thickness(0, 0, 6, 4) };
                 rb.Checked += (s, e) => { libFilter = pp; RenderLibrary(); };
                 chips.Children.Add(rb);
             }
-            DockPanel.SetDock(chips, Dock.Right);
-            head.Children.Add(chips);
-            head.Children.Add(new TextBlock { Text = q.Length > 0 ? "Resultados para \"" + q + "\"" : "Biblioteca", FontSize = 30, FontWeight = FontWeights.Bold });
-            libraryBody.Children.Add(head);
+            libraryBody.Children.Add(chips);
 
             // Tags (só aparece quando algum jogo tem)
             var used = games.SelectMany(TagsOf).Distinct(StringComparer.CurrentCultureIgnoreCase).OrderBy(t => t, StringComparer.CurrentCultureIgnoreCase).ToList();
@@ -783,10 +1162,40 @@ namespace C2Launcher
                 .Where(x => libTag == "" || TagsOf(x).Contains(libTag, StringComparer.CurrentCultureIgnoreCase))
                 .Where(x => q.Length == 0 || (x.FullName ?? x.Title).IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0 || x.Platform.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0
                     || TagsOf(x).Any(t => t.IndexOf(q, StringComparison.CurrentCultureIgnoreCase) >= 0)).ToList();
+            // Instalados antes; depois a ordem escolhida
+            Func<GameDef, long> lastOf = x => Prefs.GetLong(x.Id + ".last_session"), timeOf = x => Prefs.GetLong(x.Id + ".play_seconds");
+            var ordered = list.OrderBy(x => x.Installed ? 0 : 1);
+            list = (libSort == "az" ? ordered.ThenBy(x => x.FullName ?? x.Title, StringComparer.CurrentCultureIgnoreCase)
+                : libSort == "played" ? ordered.ThenByDescending(timeOf).ThenByDescending(lastOf)
+                : ordered.ThenByDescending(lastOf).ThenBy(x => x.FullName ?? x.Title, StringComparer.CurrentCultureIgnoreCase)).ToList();
+
+            // Conquistas de cada jogo (selo "100%" e faixa da capa), lidas uma vez por montagem da tela
+            libAch = new Dictionary<string, AchievementSet>();
+            foreach (var g in list.Where(x => x.Installed && x.UnlockFile != null))
+                try { var a = g.LoadAchievements(); if (a != null && a.Total > 0) libAch[g.Id] = a; } catch { }
+
+            if (list.Count == 0) { libraryBody.Children.Add(U.T("Nenhum jogo encontrado.", 16, "Muted")); return; }
+            if (libView == "list")
+            {
+                var header = LibraryColumns();
+                header.Margin = new Thickness(18, 0, 18, 6);
+                string[] heads = { "Jogo", "Tempo de jogo", "Última vez", "Conquistas", "Estado", "" };
+                for (int i = 0; i < heads.Length; i++) { var h = U.T(heads[i], 12, "Dim"); Grid.SetColumn(h, i); header.Children.Add(h); }
+                libraryBody.Children.Add(header);
+                var rows = new StackPanel();
+                foreach (var g in list) rows.Children.Add(LibraryRow(g));
+                libraryBody.Children.Add(StatCard(rows, new Thickness(6), new Thickness(0, 0, 0, 16)));
+                if (q.Length == 0)
+                {
+                    var add = new Button { Style = U.S("GhostButton"), Content = "+ Adicionar jogo", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(16, 8, 16, 8) };
+                    add.Click += (s, e) => ShowAddGame();
+                    libraryBody.Children.Add(add);
+                }
+                return;
+            }
             var wrap = new WrapPanel();
-            foreach (var g in list) wrap.Children.Add(CoverCard(g, 196));
+            foreach (var g in list) wrap.Children.Add(CoverCard(g, 196, true));
             if (q.Length == 0) wrap.Children.Add(AddTile(196));
-            if (list.Count == 0) libraryBody.Children.Add(U.T("Nenhum jogo encontrado.", 16, "Muted"));
             libraryBody.Children.Add(wrap);
         }
 
@@ -794,7 +1203,8 @@ namespace C2Launcher
         List<NewsItem> catalog, titles, extras;
         bool catalogBusy, titlesBusy, extrasBusy;
         string exploreConsole = "Todos", exploreQuery = "", exploreMode = "recent";   // "recent": atualizados nos últimos dias; "all": catálogo completo
-        string exploreFilter = "all", exploreSort = "recent";                          // filtro: all | playable | wish; ordem: recent | az
+        string exploreFilter = "all", exploreSort = "recent";                          // filtro: all | playable | wish; ordem: recent | pop | az
+        string exploreGenre = "Todos";
 
         // Catálogo completo + os recém-adicionados que ainda não entraram nele (o catálogo é renovado a cada 12 h)
         // + no fim, os projetos de outras fontes que o allrecomps não tem
@@ -870,17 +1280,22 @@ namespace C2Launcher
             exploreBody.Children.Add(modes);
 
             // Linha de cima: filtros (todos / Windows / Linux / jogáveis / quero jogar) e ordem. A busca é a da barra do topo (BuildTopBar)
+            // Uma linha só: filtros à esquerda; gênero e ordem viram dois menus compactos à direita (antes eram 20 botões em duas linhas)
             var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 22) };
-            var sorts = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            foreach (var so in new[] { new[] { "recent", "Recentes" }, new[] { "az", "A–Z" } })
+            var menus = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            // Gêneros (do Wikidata, pelo arquivo do site), com quantos jogos cada um tem no console escolhido
+            if (News.HasGenres)
             {
-                var key = so[0];
-                var rb = new RadioButton { Style = U.S("Segment"), Content = so[1], GroupName = "exps", IsChecked = exploreSort == key, Margin = new Thickness(6, 0, 0, 0) };
-                rb.Checked += (s, e) => { exploreSort = key; exploreShown = 48; RenderExploreResults(); };
-                sorts.Children.Add(rb);
+                var inConsole = source.Where(n => n.Windows && (exploreConsole == "Todos" || n.Console == exploreConsole)).ToList();
+                var counts = News.GenreOrder.Select(gn => new KeyValuePair<string, int>(gn, inConsole.Count(n => News.GenresOf(n).Contains(gn)))).Where(kv => kv.Value > 0).OrderByDescending(kv => kv.Value).ToList();
+                if (exploreGenre != "Todos" && !counts.Any(kv => kv.Key == exploreGenre)) exploreGenre = "Todos";
+                var opts2 = new[] { new KeyValuePair<string, int>("Todos", inConsole.Count) }.Concat(counts).Select(kv => new[] { kv.Key, (kv.Key == "Todos" ? "Todos os gêneros" : kv.Key) + "   " + kv.Value }).ToList();
+                menus.Children.Add(DropMenu("Gênero", exploreGenre == "Todos" ? "Todos" : exploreGenre, opts2, exploreGenre, k => { exploreGenre = k; exploreShown = 48; RenderExplore(); }));
             }
-            DockPanel.SetDock(sorts, Dock.Right);
-            bar.Children.Add(sorts);
+            var sortOpts = new List<string[]> { new[] { "recent", "Recentes" }, new[] { "pop", "Populares" }, new[] { "az", "A–Z" } };
+            menus.Children.Add(DropMenu("Ordenar", sortOpts.First(o => o[0] == exploreSort)[1], sortOpts, exploreSort, k => { exploreSort = k; exploreShown = 48; RenderExplore(); }));
+            DockPanel.SetDock(menus, Dock.Right);
+            bar.Children.Add(menus);
             var filters = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
             int wishes = Wishlist().Count;
             var opts = new List<string[]> { new[] { "all", "Todos" }, new[] { "win", "Windows" }, new[] { "linux", "Linux" } };
@@ -905,7 +1320,7 @@ namespace C2Launcher
             cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
             cols.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var side = new StackPanel { Margin = new Thickness(0, 0, 24, 0) };
-            var sideTitle = U.T("CONSOLES", 12, "Dim", FontWeights.SemiBold);
+            var sideTitle = U.T("Consoles", 13, "Dim", FontWeights.SemiBold);
             sideTitle.Margin = new Thickness(16, 0, 0, 8);
             side.Children.Add(sideTitle);
             int total = source.Count(n => n.Windows);
@@ -927,6 +1342,17 @@ namespace C2Launcher
             // Grade que ocupa a largura toda: as colunas se ajustam à janela e os cartões esticam (margem negativa compensa o espaço entre eles)
             exploreResults = new UniformGrid { Columns = exploreCols, Margin = new Thickness(-10, 0, -10, 0), VerticalAlignment = VerticalAlignment.Top };
             right.SizeChanged += (s, e) => { if (e.WidthChanged) FitExploreColumns(e.NewSize.Width); };
+            // Aviso de que a lista está sendo atualizada: com o cache na tela, sem ele parece que não há nada novo
+            var dot = new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+            dot.SetResourceReference(Border.BackgroundProperty, "Accent");
+            Pulse(dot);
+            var loadRow = new StackPanel { Orientation = Orientation.Horizontal };
+            loadRow.Children.Add(dot);
+            loadRow.Children.Add(U.T(exploreMode == "all" ? "Atualizando o catálogo…" : "Buscando novidades…", 13, "Muted"));
+            exploreLoading = new Border { Child = loadRow, Padding = new Thickness(14, 8, 14, 8), Margin = new Thickness(0, 0, 0, 16), CornerRadius = new CornerRadius(8),
+                HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+            exploreLoading.SetResourceReference(Border.BackgroundProperty, "WashLo");
+            right.Children.Add(exploreLoading);
             right.Children.Add(exploreResults);
             exploreMore = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) };
             right.Children.Add(exploreMore);
@@ -937,9 +1363,197 @@ namespace C2Launcher
             if (exploreMode == "all" && News.TitlesNeedRefresh(titles) && !titlesBusy) LoadTitles();
             // Depois do catálogo do allrecomps: a lista de fora é comparada com ele
             if (exploreMode == "all" && titles.Count > 0 && News.ExtrasStale && !extrasBusy) LoadExtras();
+            if (News.DataNeedsRefresh && !dataBusy) LoadCatalogData();
+            UpdateExploreLoading();
+        }
+
+        // Só com cartões na tela: com a lista vazia, os esqueletos já mostram que está carregando
+        Border exploreLoading;
+        void UpdateExploreLoading()
+        {
+            if (exploreLoading == null) return;
+            var source = ExploreSource();
+            exploreLoading.Visibility = ExploreBusy() && source != null && source.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        bool dataBusy;
+
+        // Gêneros e estrelas do site; quando chegam pela primeira vez, a fileira de gêneros aparece
+        async void LoadCatalogData()
+        {
+            dataBusy = true;
+            bool had = News.HasGenres;
+            bool ok = await News.RefreshData().ConfigureAwait(false);
+            Dispatcher.Invoke((Action)(() =>
+            {
+                dataBusy = false;
+                starsByTitle = null;
+                if (ok && exploreView.Visibility == Visibility.Visible && page == null) { if (had) RenderExploreResults(); else RenderExplore(); }
+            }));
+        }
+
+        // Estrelas de um cartão: do repositório (projetos) ou, nos jogos do catálogo completo, o projeto mais estrelado do jogo
+        Dictionary<string, int> starsByTitle;
+        int StarsFor(NewsItem n)
+        {
+            if (!string.IsNullOrEmpty(n.Repo)) return News.StarsOf(n.Repo);
+            if (starsByTitle == null)
+            {
+                starsByTitle = new Dictionary<string, int>();
+                foreach (var c in (catalog ?? new List<NewsItem>()).Where(c => !string.IsNullOrEmpty(c.Repo)))
+                {
+                    string k = News.TitleKey(c.Title); int s = News.StarsOf(c.Repo), cur;
+                    if (k.Length > 0 && (!starsByTitle.TryGetValue(k, out cur) || s > cur)) starsByTitle[k] = s;
+                }
+            }
+            string key = News.TitleKey(n.Title);
+            int best = 0, v;
+            if (starsByTitle.TryGetValue(key, out v)) best = v;
+            foreach (var kv in starsByTitle) if (key.Length >= 5 && kv.Key.StartsWith(key) && kv.Value > best) best = kv.Value;   // "Darkwatch" ← "Darkwatch - Darker Edition"
+            return best;
         }
 
         // Token pessoal do GitHub (opcional): sem ele a API aceita 60 consultas por hora, com ele 5.000
+        // Atualiza todos os jogos com versão nova, um de cada vez: backup dos saves antes de cada um, progresso por jogo
+        bool updatingAll;
+        async void UpdateAll()
+        {
+            if (updatingAll) return;
+            var list = games.Where(x => x.Installed && Updates.Available(x, Prefs)).ToList();
+            if (list.Count == 0) return;
+            string names = string.Join("\n", list.Select(x => "•  " + (x.FullName ?? x.Title) + "  →  " + Updates.Label(Updates.Latest(x).Tag)).ToArray());
+            if (!await Confirm(hub, list.Count == 1 ? "Atualizar 1 jogo?" : "Atualizar " + list.Count + " jogos?",
+                names + "\n\nAntes de cada um, o hub faz um backup dos saves. Saves, configurações e mods continuam como estão. Jogos abertos ficam para depois.", "Atualizar")) return;
+
+            updatingAll = true;
+            var overlay = new Grid { Background = U.Solid(Color.FromArgb(190, 4, 4, 5)) };
+            var card = U.Card(null, new Thickness(0), new Thickness(28, 24, 28, 24));
+            card.Width = 520; card.HorizontalAlignment = HorizontalAlignment.Center; card.VerticalAlignment = VerticalAlignment.Center;
+            var sp = new StackPanel();
+            var title = U.T("Atualizando jogos", 22, "Text", FontWeights.SemiBold);
+            sp.Children.Add(title);
+            var rows = new Dictionary<GameDef, Tuple<TextBlock, ProgressBar>>();
+            foreach (var g in list)
+            {
+                var r = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
+                var top = new DockPanel();
+                var st = U.T("Na fila", 13, "Muted"); DockPanel.SetDock(st, Dock.Right);
+                top.Children.Add(st);
+                top.Children.Add(U.T((g.FullName ?? g.Title) + "  ·  " + Updates.Label(Updates.Latest(g).Tag), 15, "Text", FontWeights.SemiBold));
+                r.Children.Add(top);
+                var bar = new ProgressBar { Maximum = 1, Margin = new Thickness(0, 6, 0, 0) };
+                r.Children.Add(bar);
+                sp.Children.Add(r);
+                rows[g] = Tuple.Create(st, bar);
+            }
+            var close = new Button { Style = U.S("PrimaryButton"), Content = "Fechar", Padding = new Thickness(26, 9, 26, 9), HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 20, 0, 0), Visibility = Visibility.Collapsed };
+            close.Click += (s, e) => root.Children.Remove(overlay);
+            sp.Children.Add(close);
+            card.Child = sp;
+            overlay.Children.Add(card);
+            root.Children.Add(overlay);
+
+            int ok = 0, fail = 0, skip = 0;
+            foreach (var g in list)
+            {
+                var row = rows[g];
+                if (g.IsRunning()) { row.Item1.Text = "Aberto: fica para depois"; skip++; continue; }
+                row.Item1.Text = "Baixando…";
+                try
+                {
+                    if (Saves.HasSaves(g)) { row.Item1.Text = "Backup dos saves…"; await Task.Run(() => Saves.Create(g, "auto")); }
+                    await Updates.Apply(g, Prefs, (p, t) => Dispatcher.BeginInvoke((Action)(() => { row.Item2.Value = p; row.Item1.Text = t; })));
+                    row.Item2.Value = 1; row.Item1.Text = "✓ Atualizado";
+                    ok++;
+                }
+                catch (Exception ex) { row.Item1.Text = "Falhou: " + ex.Message; row.Item1.TextTrimming = TextTrimming.CharacterEllipsis; row.Item1.MaxWidth = 260; row.Item1.ToolTip = ex.Message; fail++; }
+            }
+            Prefs.Save();
+            updatingAll = false;
+            title.Text = fail == 0 && skip == 0 ? "Tudo atualizado" : ok + " atualizado" + (ok == 1 ? "" : "s") + (fail > 0 ? "  ·  " + fail + " com falha" : "") + (skip > 0 ? "  ·  " + skip + " para depois" : "");
+            close.Visibility = Visibility.Visible;
+            close.Focus();
+            RebuildCards();
+        }
+
+        // Ajustes do hub (botão no pé da barra de ícones): paleta, pasta da biblioteca e token do GitHub
+        void ShowHubSettings()
+        {
+            var overlay = new Grid { Background = U.Solid(Color.FromArgb(205, 17, 17, 19)) };
+            var card = U.Card(null, new Thickness(0), new Thickness(30, 26, 30, 24));
+            card.Width = 640; card.HorizontalAlignment = HorizontalAlignment.Center; card.VerticalAlignment = VerticalAlignment.Center;
+            card.Effect = new DropShadowEffect { BlurRadius = 40, ShadowDepth = 10, Opacity = 0.7 };
+            var sp = new StackPanel();
+            Action close = () => root.Children.Remove(overlay);
+            sp.Children.Add(U.T("Ajustes", 24, "Text", FontWeights.SemiBold));
+
+            var h1 = U.T("Aparência", 15, "Text", FontWeights.SemiBold); h1.Margin = new Thickness(0, 18, 0, 4);
+            sp.Children.Add(h1);
+            var about = U.T("Cores do hub. As páginas de cada jogo continuam com as cores do próprio jogo.", 13, "Muted");
+            about.TextWrapping = TextWrapping.Wrap; about.Margin = new Thickness(0, 0, 0, 12);
+            sp.Children.Add(about);
+            var grid = new UniformGrid { Columns = 2 };
+            foreach (var p in HubPalette.All)
+            {
+                var pal = p;
+                bool on = pal.Key == HubPalette.Current.Key;
+                var row = new DockPanel();
+                var sw = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
+                foreach (var c in pal.Swatches) sw.Children.Add(new Border { Width = 18, Height = 34, Background = U.Solid(c), BorderBrush = U.Solid(Ink(40)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3), Margin = new Thickness(0, 0, 3, 0) });
+                DockPanel.SetDock(sw, Dock.Left);
+                row.Children.Add(sw);
+                var txt = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+                txt.Children.Add(U.T(pal.Name + (on ? "  ✓" : ""), 15, "Text", FontWeights.SemiBold));
+                var hint = U.T(pal.Hint, 12, "Muted"); hint.TextWrapping = TextWrapping.Wrap;
+                txt.Children.Add(hint);
+                row.Children.Add(txt);
+                var bd = new Border { Child = row, Padding = new Thickness(12, 10, 12, 10), CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(on ? 2 : 1), Margin = new Thickness(0, 0, 10, 10) };
+                bd.SetResourceReference(Border.BorderBrushProperty, on ? "Accent" : "Line");
+                bd.SetResourceReference(Border.BackgroundProperty, on ? "WashHi" : "WashLo");
+                var b = new Button { Style = U.S("BareButton"), Content = bd, ToolTip = "Usar a paleta " + pal.Name };
+                b.Click += (s, e) => { if (pal.Key == HubPalette.Current.Key) return; close(); ChangePalette(pal.Key); Toast("Paleta " + pal.Name + " aplicada"); };
+                grid.Children.Add(b);
+            }
+            sp.Children.Add(grid);
+
+            var h2 = U.T("Biblioteca", 15, "Text", FontWeights.SemiBold); h2.Margin = new Thickness(0, 14, 0, 6);
+            sp.Children.Add(h2);
+            var lib = new DockPanel();
+            var chg = new Button { Style = U.S("GhostButton"), Content = "Trocar pasta", Padding = new Thickness(14, 7, 14, 7), FontSize = 13 };
+            chg.Click += (s, e) => { close(); PickLibrary(); };
+            DockPanel.SetDock(chg, Dock.Right);
+            lib.Children.Add(chg);
+            var path = U.T(Prefs.LibraryRoot, 14, "Text"); path.VerticalAlignment = VerticalAlignment.Center; path.TextTrimming = TextTrimming.CharacterEllipsis;
+            lib.Children.Add(path);
+            sp.Children.Add(lib);
+
+            var h3 = U.T("GitHub", 15, "Text", FontWeights.SemiBold); h3.Margin = new Thickness(0, 18, 0, 6);
+            sp.Children.Add(h3);
+            var gh = new DockPanel();
+            var tok = new Button { Style = U.S("GhostButton"), Content = GitHub.Token != null ? "Trocar token" : "Adicionar token", Padding = new Thickness(14, 7, 14, 7), FontSize = 13 };
+            tok.Click += (s, e) => { close(); ShowGitHubToken(); };
+            DockPanel.SetDock(tok, Dock.Right);
+            gh.Children.Add(tok);
+            var ghTxt = U.T(GitHub.Token != null ? "Token conectado: 5.000 consultas por hora" : "Sem token: 60 consultas por hora (opcional)", 14, "Muted"); ghTxt.VerticalAlignment = VerticalAlignment.Center;
+            gh.Children.Add(ghTxt);
+            sp.Children.Add(gh);
+
+            var foot = new DockPanel { Margin = new Thickness(0, 22, 0, 0) };
+            var ok = new Button { Style = U.S("PrimaryButton"), Content = "Fechar", Padding = new Thickness(26, 9, 26, 9), FontSize = 15, FontWeight = FontWeights.SemiBold, IsCancel = true, IsDefault = true };
+            ok.Click += (s, e) => close();
+            DockPanel.SetDock(ok, Dock.Right);
+            foot.Children.Add(ok);
+            var ver = U.T("Recomp Hub " + HubUpdate.CurrentLabel, 12, "Dim"); ver.VerticalAlignment = VerticalAlignment.Center;
+            foot.Children.Add(ver);
+            sp.Children.Add(foot);
+
+            card.Child = sp;
+            overlay.Children.Add(card);
+            overlay.MouseLeftButtonDown += (s, e) => { if (e.OriginalSource == overlay) close(); };
+            root.Children.Add(overlay);
+            ok.Focus();
+        }
+
         void ShowGitHubToken()
         {
             var overlay = new Grid { Background = U.Solid(Color.FromArgb(205, 17, 17, 19)) };
@@ -963,7 +1577,7 @@ namespace C2Launcher
             showLimit(GitHub.Token);
 
             var box = new PasswordBox { FontSize = 14, Padding = new Thickness(10, 8, 10, 8), Background = U.Solid(Color.FromArgb(102, 0, 0, 0)), Foreground = Brushes.White,
-                BorderBrush = U.Solid(Color.FromArgb(40, 255, 255, 255)), CaretBrush = Brushes.White };
+                BorderBrush = U.Solid(Ink(40)), CaretBrush = Brushes.White };
             sp.Children.Add(U.T(GitHub.Token != null ? "Trocar o token" : "Cole o token aqui", 13, "Dim"));
             box.Margin = new Thickness(0, 6, 0, 10);
             sp.Children.Add(box);
@@ -1033,7 +1647,8 @@ namespace C2Launcher
             Dispatcher.Invoke((Action)(() =>
             {
                 catalogBusy = false;
-                if (list != null) { catalog = list; CheckWishlist(); if (exploreView.Visibility == Visibility.Visible && exploreMode == "recent" && page == null) RenderExplore(); }
+                UpdateExploreLoading();
+                if (list != null) { catalog = list; starsByTitle = null; CheckWishlist(); if (exploreView.Visibility == Visibility.Visible && exploreMode == "recent" && page == null) RenderExplore(); }
                 else if (catalog.Count == 0 && exploreInfo != null) exploreInfo.Text = "Não consegui carregar. Verifique a internet.";
             }));
         }
@@ -1046,6 +1661,7 @@ namespace C2Launcher
             Dispatcher.Invoke((Action)(() =>
             {
                 titlesBusy = false;
+                UpdateExploreLoading();
                 if (list != null) { titles = list; if (exploreView.Visibility == Visibility.Visible && exploreMode == "all" && page == null) RenderExplore(); }
                 else if (titles.Count == 0 && exploreInfo != null) exploreInfo.Text = "Não consegui carregar o catálogo. Verifique a internet.";
             }));
@@ -1061,13 +1677,15 @@ namespace C2Launcher
             var wl = Wishlist();
             var filtered = source.Where(n => n.Windows)
                 .Where(n => exploreConsole == "Todos" || n.Console == exploreConsole)
+                .Where(n => exploreGenre == "Todos" || News.GenresOf(n).Contains(exploreGenre))
                 .Where(n => exploreFilter != "playable" || (n.Status ?? "").IndexOf("Jogável", StringComparison.OrdinalIgnoreCase) >= 0)
                 .Where(n => exploreFilter != "wish" || wl.Contains(NormTitle(n.Title)))
                 .Where(n => exploreFilter != "win" || OnSystem(n, "win"))
                 .Where(n => exploreFilter != "linux" || OnSystem(n, "linux"))
                 .Where(n => q == "" || (n.Title ?? "").IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0 || (n.Console ?? "").IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
-            // Recentes: mais novo primeiro (o catálogo completo não tem data: fica na ordem do site); A–Z: pelo nome
+            // Recentes: mais novo primeiro (o catálogo completo não tem data: fica na ordem do site); Populares: mais estrelas no GitHub; A–Z: pelo nome
             var list = (exploreSort == "az" ? filtered.OrderBy(n => CleanTitle(n.Title), StringComparer.CurrentCultureIgnoreCase)
+                : exploreSort == "pop" ? filtered.OrderByDescending(StarsFor).ThenBy(n => CleanTitle(n.Title), StringComparer.CurrentCultureIgnoreCase)
                 : exploreMode == "recent" ? filtered.OrderByDescending(n => n.When ?? DateTime.MinValue) : filtered).ToList();
             if (source.Count == 0)
             {
@@ -1097,7 +1715,7 @@ namespace C2Launcher
         FrameworkElement ExploreCard(NewsItem n)
         {
             var match = News.Match(n, games);
-            var img = new Border { CornerRadius = new CornerRadius(6), BorderBrush = U.Solid(Color.FromArgb(24, 255, 255, 255)), BorderThickness = new Thickness(1),
+            var img = new Border { CornerRadius = new CornerRadius(6), BorderBrush = U.Solid(Ink(24)), BorderThickness = new Thickness(1),
                 Background = U.Solid((Color)ColorConverter.ConvertFromString("#1E1E21")) };
             if (File.Exists(n.ThumbPath)) SetThumb(img, n.ThumbPath); else { Pulse(img); LoadThumb(n, img); }
             var open = new Button { Style = U.S("BareButton"), Content = img, ToolTip = "Ver detalhes do projeto" };
@@ -1148,10 +1766,18 @@ namespace C2Launcher
             m.TextTrimming = TextTrimming.CharacterEllipsis; m.TextWrapping = TextWrapping.NoWrap; m.Margin = new Thickness(2, 0, 0, 10);
             st.Children.Add(m);
             Button act;
+            string launcher = match == null ? LauncherLabel(n) : null;
             if (match != null)
             {
                 act = new Button { Style = U.S("GhostButton"), Content = "Na biblioteca  ·  Abrir", Padding = new Thickness(14, 6, 14, 6), FontSize = 14, HorizontalAlignment = HorizontalAlignment.Left };
                 act.Click += (s, e) => OpenGame(match, null, null);
+            }
+            else if (launcher != null)
+            {
+                // Instala por um launcher do próprio projeto (monta o jogo no PC a partir da sua cópia)
+                act = new Button { Style = U.S("GhostButton"), Content = launcher, Padding = new Thickness(14, 6, 14, 6), FontSize = 14, HorizontalAlignment = HorizontalAlignment.Left,
+                    ToolTip = "Este projeto se instala por um launcher próprio, que monta o jogo no seu PC a partir da sua cópia" };
+                act.Click += (s, e) => InstallFromNews(n);
             }
             else if (win == WinCheck.No || win == WinCheck.NoRelease)
             {
@@ -1520,7 +2146,7 @@ namespace C2Launcher
         FrameworkElement SkeletonCard(int i)
         {
             Func<double, double, double, Border> block = (w, h, top) => new Border { Width = w, Height = h, CornerRadius = new CornerRadius(5), Margin = new Thickness(0, top, 0, 0), HorizontalAlignment = HorizontalAlignment.Left,
-                Background = U.Solid(Color.FromArgb(22, 255, 255, 255)) };
+                Background = U.Solid(Ink(22)) };
             var st = new StackPanel();
             var art = block(0, 141, 0);
             art.ClearValue(WidthProperty); art.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -1719,7 +2345,7 @@ namespace C2Launcher
         FrameworkElement ProfileHeader(GameDef fav, List<GameDef> installed, long total, int unlocked, int platinas, int played, List<Session> sessions, CultureInfo pt)
         {
             var host = new Grid { Height = 220, Margin = new Thickness(0, 4, 0, 24), ClipToBounds = true };
-            var bg = new Border { CornerRadius = new CornerRadius(12), Background = U.Solid(Color.FromArgb(11, 255, 255, 255)) };
+            var bg = new Border { CornerRadius = new CornerRadius(12), Background = U.Solid(Ink(11)) };
             // Banner: a imagem escolhida pela pessoa, a arte de um jogo ou (padrão) a do jogo favorito; desfocado ou nítido
             bool blur;
             var src = ProfileBanner(fav, out blur);
@@ -1736,7 +2362,7 @@ namespace C2Launcher
             scrim.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(blur ? 110 : 40), pc.R, pc.G, pc.B), 0.62));
             scrim.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(blur ? 170 : 200), pc.R, pc.G, pc.B), 1));
             host.Children.Add(new Border { CornerRadius = new CornerRadius(12), IsHitTestVisible = false, Background = scrim });
-            host.Children.Add(new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), BorderBrush = U.Solid(Color.FromArgb(20, 255, 255, 255)), IsHitTestVisible = false });
+            host.Children.Add(new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), BorderBrush = U.Solid(Ink(20)), IsHitTestVisible = false });
 
             var row = new DockPanel { Margin = new Thickness(32, 0, 32, 0), VerticalAlignment = VerticalAlignment.Center };
             var av = Avatar(132);
@@ -1835,7 +2461,7 @@ namespace C2Launcher
         FrameworkElement Banner(GameDef g, double w, double h)
         {
             var grid = new Grid { Width = w, Height = h, ClipToBounds = true };
-            var b = new Border { CornerRadius = new CornerRadius(6), Background = U.Solid(Color.FromArgb(18, 255, 255, 255)) };
+            var b = new Border { CornerRadius = new CornerRadius(6), Background = U.Solid(Ink(18)) };
             string p = ArtCache.Background(g) ?? ArtCache.Cover(g);
             var src = p != null ? Art.Load(p, (int)(w * 2)) : null;
             if (src != null) b.Background = new ImageBrush(src) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Center };   // capa centralizada: o topo da caixa costuma ser a faixa do console
@@ -1888,11 +2514,11 @@ namespace C2Launcher
                 var tile = new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(5), Margin = new Thickness(0, 0, 6, 0),
                     ToolTip = (string.IsNullOrEmpty(x.Label) ? a.Singular : x.Label) + (x.UnlockedAt.HasValue ? "  ·  " + x.UnlockedAt.Value.ToString("d 'de' MMM", pt) : "") + (string.IsNullOrEmpty(x.Description) ? "" : "\n" + x.Description) };
                 if (ic != null) tile.Background = new ImageBrush(ic) { Stretch = Stretch.UniformToFill };
-                else { tile.Background = U.Solid(Color.FromArgb(26, 255, 255, 255)); tile.Child = new TextBlock { Text = "★", FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)FindResource("Muted") }; }
+                else { tile.Background = U.Solid(Ink(26)); tile.Child = new TextBlock { Text = "★", FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)FindResource("Muted") }; }
                 strip.Children.Add(tile);
             }
             if (got.Count > icons)
-                strip.Children.Add(new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(5), Background = U.Solid(Color.FromArgb(26, 255, 255, 255)),
+                strip.Children.Add(new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(5), Background = U.Solid(Ink(26)),
                     Child = new TextBlock { Text = "+" + (got.Count - icons), FontSize = 13, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
             if (got.Count > 0) sp.Children.Add(strip);
             return sp;
@@ -1935,7 +2561,7 @@ namespace C2Launcher
                     var r = new DockPanel();
                     var ic = AchIcon(lastA);
                     var tile = new Border { Width = 46, Height = 46, CornerRadius = new CornerRadius(5), Margin = new Thickness(0, 0, 14, 0) };
-                    if (ic != null) tile.Background = new ImageBrush(ic) { Stretch = Stretch.UniformToFill }; else tile.Background = U.Solid(Color.FromArgb(26, 255, 255, 255));
+                    if (ic != null) tile.Background = new ImageBrush(ic) { Stretch = Stretch.UniformToFill }; else tile.Background = U.Solid(Ink(26));
                     DockPanel.SetDock(tile, Dock.Left);
                     r.Children.Add(tile);
                     var t = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
@@ -1943,7 +2569,7 @@ namespace C2Launcher
                     t.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(lastA.Label) ? a.Singular : lastA.Label, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
                     t.Children.Add(Note((lastA.Gamerscore > 0 ? lastA.Gamerscore + " G  ·  " : "") + (lastA.UnlockedAt.HasValue ? lastA.UnlockedAt.Value.ToString("d 'de' MMM", pt) : "")));
                     r.Children.Add(t);
-                    ach.Children.Add(new Border { Child = r, Padding = new Thickness(12), CornerRadius = new CornerRadius(8), Background = U.Solid(Color.FromArgb(16, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Top });
+                    ach.Children.Add(new Border { Child = r, Padding = new Thickness(12), CornerRadius = new CornerRadius(8), Background = U.Solid(Ink(16)), VerticalAlignment = VerticalAlignment.Top });
                 }
                 var strip = AchievementStrip(a, 6, pt);
                 Grid.SetColumn(strip, 2);
@@ -1978,7 +2604,7 @@ namespace C2Launcher
             row.Children.Add(right);
             var bg = new Border { Child = row, Padding = new Thickness(8), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent };
             var b = new Button { Style = U.S("BareButton"), Content = bg, ToolTip = "Abrir " + (g.FullName ?? g.Title), HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            b.MouseEnter += (s, e) => bg.Background = U.Solid(Color.FromArgb(12, 255, 255, 255));
+            b.MouseEnter += (s, e) => bg.Background = U.Solid(Ink(12));
             b.MouseLeave += (s, e) => bg.Background = Brushes.Transparent;
             b.Click += (s, e) => OpenGame(g, null, null);
             return b;
@@ -2012,7 +2638,7 @@ namespace C2Launcher
                 icon.SetResourceReference(TextBlock.ForegroundProperty, on ? "OnAccent" : "Muted");
                 var tile = new Border { Width = 46, Height = 46, CornerRadius = new CornerRadius(10), Margin = new Thickness(0, 0, 9, 9), Child = icon, Opacity = on ? 1 : 0.35,
                     ToolTip = (string)x[1] + (on ? "  ✓" : "") + "\n" + (string)x[2] };
-                if (on) tile.SetResourceReference(Border.BackgroundProperty, "Accent"); else tile.Background = U.Solid(Color.FromArgb(26, 255, 255, 255));
+                if (on) tile.SetResourceReference(Border.BackgroundProperty, "Accent"); else tile.Background = U.Solid(Ink(26));
                 wrap.Children.Add(tile);
             }
             return Section("Insígnias", got + " de " + list.Count, wrap, new Thickness(16, 14, 7, 6));
@@ -2100,7 +2726,7 @@ namespace C2Launcher
         static Border StatCard(UIElement child, Thickness padding, Thickness margin)
         {
             return new Border { Child = child, Padding = padding, Margin = margin, CornerRadius = new CornerRadius(10),
-                Background = U.Solid(Color.FromArgb(11, 255, 255, 255)), BorderBrush = U.Solid(Color.FromArgb(20, 255, 255, 255)), BorderThickness = new Thickness(1) };
+                Background = U.Solid(Ink(11)), BorderBrush = U.Solid(Ink(20)), BorderThickness = new Thickness(1) };
         }
 
         static TextBlock Note(string text)
@@ -2174,9 +2800,9 @@ namespace C2Launcher
             row.Children.Add(sh);
             var bg = new Border { Child = row, Padding = new Thickness(12, 9, 12, 9), CornerRadius = new CornerRadius(8), Background = Brushes.Transparent };
             var b = new Button { Style = U.S("BareButton"), Content = bg, ToolTip = tip, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            b.MouseEnter += (s, e) => bg.Background = U.Solid(Color.FromArgb(14, 255, 255, 255));
+            b.MouseEnter += (s, e) => bg.Background = U.Solid(Ink(14));
             b.MouseLeave += (s, e) => bg.Background = Brushes.Transparent;
-            b.GotKeyboardFocus += (s, e) => bg.Background = U.Solid(Color.FromArgb(14, 255, 255, 255));
+            b.GotKeyboardFocus += (s, e) => bg.Background = U.Solid(Ink(14));
             b.LostKeyboardFocus += (s, e) => bg.Background = Brushes.Transparent;
             b.Click += (s, e) => OpenGame(g, null, null);
             return b;
@@ -2190,6 +2816,8 @@ namespace C2Launcher
         int carIndex;
         DispatcherTimer carTimer;
         StackPanel carDots;
+        Border carProg;
+        const double CarH = 330;   // altura do cartão em destaque
 
         // Carrossel genérico: recebe os cartões prontos (jogos ou novidades)
         FrameworkElement BuildCarousel(List<Grid> cards, int start, Action<int> onCenter, double topRoom)
@@ -2198,20 +2826,28 @@ namespace C2Launcher
             carOnCenter = onCenter;
             carIndex = Math.Max(0, Math.Min(start, cards.Count - 1));
             // espaço livre no topo para o personagem que sai do cartão
-            var host = new Grid { Height = 390 + topRoom, Margin = new Thickness(0, topRoom > 0 ? -20 : 0, 0, 0), Tag = topRoom };
+            var host = new Grid { Height = CarH + topRoom, Margin = new Thickness(0, topRoom > 0 ? -20 : 0, 0, 0), Tag = topRoom };
             carCanvas = new Canvas { ClipToBounds = false, Tag = topRoom };
             host.Children.Add(carCanvas);
             foreach (var c in carCards) carCanvas.Children.Add(c);
 
-            // setas e indicadores
-            var nav = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom };
-            var prev = RoundButton(Ico.Back, () => Rotate(-1));
-            carDots = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 14, 0) };
-            for (int i = 0; i < carCards.Count; i++) carDots.Children.Add(new Border { Height = 6, Width = 6, CornerRadius = new CornerRadius(3), Margin = new Thickness(3, 0, 3, 0), Background = U.Solid(Color.FromArgb(80, 255, 255, 255)) });
-            var next = RoundButton(Ico.Back, () => Rotate(1));
-            next.RenderTransformOrigin = new Point(0.5, 0.5); next.RenderTransform = new ScaleTransform(-1, 1);
-            nav.Children.Add(prev); nav.Children.Add(carDots); nav.Children.Add(next);
-            host.Children.Add(nav);
+            // Vitrine: miniaturas dos slides no canto do cartão (clica para ir direto) e uma barra com o tempo até o próximo
+            carDots = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 18, 18) };
+            double tw = carCards.Count <= 5 ? 84 : 58;
+            for (int i = 0; i < carCards.Count && carCards.Count > 1; i++)
+            {
+                int k = i;
+                var th = new Border { Width = tw, Height = Math.Round(tw * 0.58), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(2), Margin = new Thickness(8, 0, 0, 0), BorderBrush = Brushes.Transparent, Opacity = 0.55, Cursor = Cursors.Hand };
+                th.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { Source = carCards[i].Children[0] });
+                th.MouseLeftButtonUp += (s, e) => { if (k != carIndex) { carIndex = k; Layout(true); if (carTimer != null && carTimer.IsEnabled) { carTimer.Stop(); carTimer.Start(); } } e.Handled = true; };
+                th.MouseEnter += (s, e) => { if (k != carIndex) th.Opacity = 0.85; };
+                th.MouseLeave += (s, e) => { if (k != carIndex) th.Opacity = 0.55; };
+                carDots.Children.Add(th);
+            }
+            host.Children.Add(carDots);
+            carProg = new Border { Height = 3, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(8, 0, 8, 0), CornerRadius = new CornerRadius(2), Width = 0, IsHitTestVisible = false };
+            carProg.SetResourceReference(Border.BackgroundProperty, "Brand");
+            host.Children.Add(carProg);
             host.SizeChanged += (s, e) => Layout(false);
             host.Loaded += (s, e) => Layout(false);
 
@@ -2246,7 +2882,7 @@ namespace C2Launcher
         void Layout(bool animate)
         {
             if (carCanvas == null || carCanvas.ActualWidth <= 0) { if (carCanvas != null) carCanvas.Dispatcher.BeginInvoke((Action)(() => { if (carCanvas.ActualWidth > 0) Layout(false); }), DispatcherPriority.Loaded); return; }
-            double W = carCanvas.ActualWidth, ch = 340;
+            double W = carCanvas.ActualWidth, ch = CarH;
             double y = carCanvas.Tag is double ? (double)carCanvas.Tag : 0;
             // O novo entra por cima do antigo (que fica inteiro embaixo) e só depois o antigo some: sem os dois meio transparentes
             var cur = carCards[carIndex];
@@ -2280,9 +2916,16 @@ namespace C2Launcher
             }
             for (int i = 0; i < carDots.Children.Count; i++)
             {
-                var dot = (Border)carDots.Children[i];
-                dot.Width = i == carIndex ? 18 : 6;
-                dot.SetResourceReference(Border.BackgroundProperty, i == carIndex ? "Text" : "Line");
+                var th = (Border)carDots.Children[i];
+                th.Opacity = i == carIndex ? 1 : 0.55;
+                th.BorderBrush = i == carIndex ? Brushes.White : Brushes.Transparent;
+            }
+            // Barra do tempo até o próximo slide (some quando a rotação automática está parada)
+            if (carProg != null)
+            {
+                bool run = carTimer != null && carTimer.IsEnabled && U.Motion;
+                carProg.Visibility = run ? Visibility.Visible : Visibility.Collapsed;
+                if (run) carProg.BeginAnimation(WidthProperty, new DoubleAnimation(0, Math.Max(0, W - 16), carTimer.Interval));
             }
             if (carOnCenter != null) carOnCenter(carIndex);
         }
@@ -2303,7 +2946,7 @@ namespace C2Launcher
             var art = layered ? Art.Load(layer, 1280) : Art.For(g, Prefs.Get(g.Id + ".hero_image"), 1280);
             bool coverOnly = !layered && OnlyCover(g);
             if (coverOnly) art = Art.Blurred(Art.Load(ArtCache.Cover(g), 600));
-            var frame = new Border { CornerRadius = new CornerRadius(8), Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill }, BorderBrush = U.Solid(Color.FromArgb(24, 255, 255, 255)), BorderThickness = new Thickness(1) };
+            var frame = new Border { CornerRadius = new CornerRadius(8), Background = new ImageBrush(art) { Stretch = Stretch.UniformToFill }, BorderBrush = U.Solid(Ink(24)), BorderThickness = new Thickness(1) };
             card.Children.Add(frame);
             var shade = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
             shade.GradientStops.Add(new GradientStop(Color.FromArgb(225, t.Bg.R, t.Bg.G, t.Bg.B), 0));
@@ -2394,7 +3037,7 @@ namespace C2Launcher
             t.Children.Add(new TextBlock { Text = "Novidades do mundo recomp", FontSize = 20, FontWeight = FontWeights.SemiBold });
             double mins = (DateTime.Now - News.LastUpdate).TotalMinutes;
             string when = mins < 1 ? "agora" : mins < 60 ? "há " + (int)mins + " min" : Lower(U.Ago(News.LastUpdate));
-            t.Children.Add(new TextBlock { Text = "allrecomps.com  ·  atualizado " + when, FontSize = 13, Foreground = U.Solid(Color.FromArgb(130, 255, 255, 255)), Margin = new Thickness(0, 2, 0, 0) });
+            t.Children.Add(new TextBlock { Text = "allrecomps.com  ·  atualizado " + when, FontSize = 13, Foreground = U.Solid(Ink(130)), Margin = new Thickness(0, 2, 0, 0) });
             d.Children.Add(t);
             return d;
         }
@@ -2449,9 +3092,51 @@ namespace C2Launcher
             return s;
         }
 
+        // Projeto com launcher próprio: o botão leva ao download do launcher ou, se já estiver instalado, coloca na biblioteca
+        static string LauncherLabel(NewsItem n)
+        {
+            var lp = Launchers.ForRepo(n.Repo);
+            return lp == null ? null : lp.FindExe() != null ? "Adicionar à biblioteca" : "Baixar o launcher";
+        }
+
+        void LauncherAction(LauncherProject lp)
+        {
+            string exe = lp.FindExe();
+            if (exe == null) { U.OpenWeb(lp.Download); Toast("Instale o launcher e volte: o hub coloca o " + lp.Game + " na biblioteca sozinho"); return; }
+            AddLauncherGame(lp, exe);
+        }
+
+        void AddLauncherGame(LauncherProject lp, string exe)
+        {
+            if (games.Any(x => x.PlayExe != null && string.Equals(System.IO.Path.GetFullPath(x.PlayExe), System.IO.Path.GetFullPath(exe), StringComparison.OrdinalIgnoreCase))) { Toast(lp.Game + " já está na biblioteca"); return; }
+            AddCustom(exe, lp.Game, lp.Platform, "", "", "");
+            Prefs.Save();
+            Rescan();
+            Toast(lp.Game + " adicionado à biblioteca (abre pelo launcher do projeto)");
+        }
+
+        // Na abertura: launcher conhecido instalado e fora da biblioteca → pergunta uma vez se quer adicionar
+        async void CheckLaunchers()
+        {
+            await Task.Delay(3000);   // depois de a janela abrir
+            foreach (var lp in Launchers.All)
+            {
+                if (Prefs.Get("launcher_asked." + lp.Key) != "") continue;
+                string exe = await Task.Run(() => lp.FindExe());
+                if (exe == null) continue;
+                if (games.Any(x => x.PlayExe != null && string.Equals(System.IO.Path.GetFullPath(x.PlayExe), System.IO.Path.GetFullPath(exe), StringComparison.OrdinalIgnoreCase))) { Prefs.Set("launcher_asked." + lp.Key, "1"); continue; }
+                Prefs.Set("launcher_asked." + lp.Key, "1");
+                if (page != null) continue;
+                if (await Confirm(hub, "Adicionar " + lp.Game + "?", "O hub encontrou o launcher do " + lp.Game + " instalado neste PC (" + exe + ").\n\nNa biblioteca, o jogo abre pelo launcher do projeto, que continua cuidando das atualizações; o hub conta o tempo de jogo, mostra no Discord e faz backup dos saves.", "Adicionar"))
+                    AddLauncherGame(lp, exe);
+            }
+        }
+
         async void InstallFromNews(NewsItem n)
         {
             if (installing) return;
+            var lp = Launchers.ForRepo(n.Repo);
+            if (lp != null) { LauncherAction(lp); return; }
             if (!Directory.Exists(Prefs.LibraryRoot)) { Toast("Escolha a pasta da biblioteca primeiro (Trocar, na barra lateral).", true); return; }
             installing = true;
             try
@@ -2594,6 +3279,22 @@ namespace C2Launcher
             return tcs.Task;
         }
 
+        // Pílula do destaque: cheia na cor da marca (tipo) ou de vidro escuro (console, estrelas)
+        static Border Pill(string text, bool brand)
+        {
+            var t = new TextBlock { Text = text, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White };
+            var b = new Border { Child = t, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 4, 10, 5), Margin = new Thickness(0, 0, 6, 6) };
+            if (brand)
+            {
+                b.Background = U.Solid(HubPalette.Current.Brand);
+                // texto escuro sobre âmbar/limão; claro sobre o bordô
+                var br = HubPalette.Current.Brand;
+                t.Foreground = U.Solid(br.R * 0.3 + br.G * 0.59 + br.B * 0.11 > 140 ? Color.FromRgb(20, 16, 8) : Color.FromRgb(241, 227, 207));
+            }
+            else b.Background = U.Solid(Color.FromArgb(46, 255, 255, 255));
+            return b;
+        }
+
         static Border Chip(string text, Color bg, Color line)
         {
             return new Border { Background = U.Solid(bg), BorderBrush = U.Solid(line), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(3), Padding = new Thickness(7, 2, 7, 3), Margin = new Thickness(0, 0, 8, 8),
@@ -2605,7 +3306,7 @@ namespace C2Launcher
             bool release = n.Kind == "release";
             bool square = n.ImageW > 0 && n.ImageH > 0 ? n.ImageW < n.ImageH * 1.4 : !release;
             var card = new Grid { ClipToBounds = false };
-            var frame = new Border { CornerRadius = new CornerRadius(8), BorderBrush = U.Solid(Color.FromArgb(24, 255, 255, 255)), BorderThickness = new Thickness(1),
+            var frame = new Border { CornerRadius = new CornerRadius(8), BorderBrush = U.Solid(Ink(24)), BorderThickness = new Thickness(1),
                 Background = U.Solid((Color)ColorConverter.ConvertFromString("#161617")) };
             card.Children.Add(frame);
 
@@ -2625,25 +3326,31 @@ namespace C2Launcher
             var sp = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(34, 0, square ? 300 : 120, 28), MaxWidth = 520 };
             // Enxuto: um selo, título, uma linha de resumo e um botão
             string chipText = match != null ? "NA SUA BIBLIOTECA" : release ? "NOVA RELEASE" + (string.IsNullOrEmpty(n.Version) ? "" : "  ·  " + n.Version) : "NOVO RECOMP";
-            // Selo neutro: o tipo está no texto, não na cor
-            var chip = Chip(chipText, Color.FromArgb(150, 0, 0, 0), Color.FromArgb(70, 255, 255, 255));
-            chip.HorizontalAlignment = HorizontalAlignment.Left;
-            sp.Children.Add(chip);
+            // Etiquetas: o tipo na cor da marca, depois console e estrelas em vidro
+            var pills = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+            var main = Pill(chipText, true);
+            pills.Children.Add(main);
+            if (!string.IsNullOrEmpty(n.Console)) pills.Children.Add(Pill(n.Console, false));
+            int stars = StarsFor(n);
+            if (stars > 0) pills.Children.Add(Pill("★ " + StarsText(stars), false));
+            sp.Children.Add(pills);
             // "Nome — NomeDoRepositório": fica só o nome do jogo
             string title = CleanTitle(n.Title);
             sp.Children.Add(new TextBlock { Text = title, FontSize = 34, FontWeight = FontWeights.Bold, Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = 86, Margin = new Thickness(0, 2, 0, 0) });
             string line = n.When.HasValue ? (release ? "Release " : "Adicionado ") + Lower(U.Ago(n.When.Value)) : "";
-            if (!string.IsNullOrEmpty(n.Console)) line = n.Console + (line == "" ? "" : "  ·  " + line);
+            var gen = News.GenresOf(n);
+            if (gen.Length > 0) line = string.Join(" e ", gen.Take(2).ToArray()) + (line == "" ? "" : "  ·  " + line);
             if (line != "") sp.Children.Add(new TextBlock { Text = line, FontSize = 15, Foreground = U.Solid(Color.FromArgb(190, 255, 255, 255)), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 8, 0, 0) });
 
             string mainUrl = release && !string.IsNullOrEmpty(n.ReleaseUrl) ? n.ReleaseUrl : n.Url;
             string mainLabel = release && !string.IsNullOrEmpty(n.ReleaseUrl) ? "Ver release" : "Ver projeto";
             var btns = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 16, 0, 0) };
             // Na biblioteca: abre; com pacote para Windows: instala; senão, a página do projeto
-            bool install = match == null && n.Installable && !string.IsNullOrEmpty(n.Repo);
+            string launcher = match == null ? LauncherLabel(n) : null;
+            bool install = match == null && (launcher != null || n.Installable && !string.IsNullOrEmpty(n.Repo));
             var pc = new StackPanel { Orientation = Orientation.Horizontal };
             pc.Children.Add(U.Icon(match != null ? Ico.Play : install ? Ico.Plus : Ico.Arrow, 16));
-            pc.Children.Add(new TextBlock { Text = match != null ? "Abrir no hub" : install ? "Instalar" : mainLabel, FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            pc.Children.Add(new TextBlock { Text = match != null ? "Abrir no hub" : launcher ?? (install ? "Instalar" : mainLabel), FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var primary = new Button { Style = U.S("PrimaryButton"), Content = pc, Padding = new Thickness(22, 11, 24, 11) };
             if (match != null) primary.Click += (s, e) => OpenGame(match, frame, null);
             else if (install) primary.Click += (s, e) => InstallFromNews(n);

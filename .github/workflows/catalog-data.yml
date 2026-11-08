@@ -1,0 +1,38 @@
+# Toda semana: atualiza docs/data/catalogo.json (gênero de cada jogo, pelo Wikidata, e estrelas de cada projeto no GitHub).
+# O hub baixa esse arquivo pelo site; só os jogos novos são consultados, o resto vem do arquivo anterior.
+name: Gêneros e estrelas do catálogo
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # segunda, 6h no horário de Brasília
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  data:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compilar o hub
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File build.ps1 -Out "$env:RUNNER_TEMP\RecompHub.exe"
+
+      - name: Montar o arquivo
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: powershell -ExecutionPolicy Bypass -File tools\build_catalog_data.ps1 -Exe "$env:RUNNER_TEMP\RecompHub.exe"
+
+      - name: Salvar se mudou
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data/catalogo.json
+          git diff --cached --quiet && echo "Nada mudou." && exit 0
+          git commit -m "Gêneros e estrelas do catálogo (atualização semanal)"
+          git push

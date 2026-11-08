@@ -425,6 +425,87 @@ namespace C2Launcher
             }
         }
 
+        // ---------- Gêneros e estrelas: docs/data/catalogo.json no site, montado toda semana no GitHub (tools\build_catalog_data.ps1) ----------
+        //   o allrecomps não informa gênero; vem do Wikidata. Um arquivo só para todo mundo, em vez de mil consultas por pessoa
+        public const string DataUrl = "https://erkdev01.github.io/RecompHub/data/catalogo.json";
+        static string DataFile { get { return Path.Combine(Folder, "catalogo.json"); } }
+        static Dictionary<string, string[]> genres;
+        static Dictionary<string, int> stars;
+        static DateTime dataTried = DateTime.MinValue;
+        public static readonly string[] GenreOrder = { "Ação", "Aventura", "Plataforma", "Luta", "Tiro", "Corrida", "RPG", "Esporte", "Terror", "Puzzle", "Estratégia", "Simulação", "Festa e música" };
+
+        public static bool DataNeedsRefresh
+        {
+            get { return (DateTime.Now - dataTried).TotalMinutes > 30 && (!File.Exists(DataFile) || (DateTime.Now - File.GetLastWriteTime(DataFile)).TotalHours > 24); }
+        }
+
+        public static bool HasGenres { get { LoadData(); return genres.Count > 0; } }
+
+        static void LoadData()
+        {
+            if (genres != null) return;
+            genres = new Dictionary<string, string[]>(); stars = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            try { if (File.Exists(DataFile)) ParseData(File.ReadAllText(DataFile, Encoding.UTF8)); } catch { }
+        }
+
+        static void ParseData(string json)
+        {
+            var d = new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.Deserialize<Dictionary<string, object>>(json);
+            var g = new Dictionary<string, string[]>();
+            var s = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            object o;
+            if (d.TryGetValue("genres", out o) && o is Dictionary<string, object>)
+                foreach (var kv in (Dictionary<string, object>)o)
+                    if (kv.Value is System.Collections.ArrayList) g[kv.Key] = ((System.Collections.ArrayList)kv.Value).Cast<object>().Select(x => Convert.ToString(x)).ToArray();
+            if (d.TryGetValue("stars", out o) && o is Dictionary<string, object>)
+                foreach (var kv in (Dictionary<string, object>)o) s[kv.Key] = Convert.ToInt32(kv.Value, CultureInfo.InvariantCulture);
+            genres = g; stars = s;
+            lock (genreMemo) genreMemo.Clear();
+        }
+
+        // Baixa o arquivo do site; um arquivo estranho (página de erro, vazio) não substitui o que já está guardado
+        public static async Task<bool> RefreshData()
+        {
+            dataTried = DateTime.Now;
+            string json = await Get(DataUrl).ConfigureAwait(false);
+            if (json == null) return false;
+            try
+            {
+                var oldG = genres; var oldS = stars;
+                ParseData(json);
+                if (genres.Count < 100) { genres = oldG; stars = oldS; return false; }
+                Directory.CreateDirectory(Folder);
+                File.WriteAllText(DataFile, json, Encoding.UTF8);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Gêneros do jogo: pelo nome; nos projetos ("Darkwatch - Darker Edition (autor)"), pelo nome do jogo que começa o título
+        static readonly Dictionary<string, string[]> genreMemo = new Dictionary<string, string[]>();   // a busca pelo começo do nome é cara: guarda o resultado por título
+        public static string[] GenresOf(NewsItem n)
+        {
+            LoadData();
+            string k = TitleKey(n.Title);
+            string[] g;
+            lock (genreMemo) if (genreMemo.TryGetValue(k, out g)) return g;
+            if (!(k.Length > 0 && genres.TryGetValue(k, out g)))
+            {
+                string best = null;
+                foreach (var key in genres.Keys) if (key.Length >= 5 && k.StartsWith(key) && (best == null || key.Length > best.Length)) best = key;
+                g = best != null ? genres[best] : new string[0];
+            }
+            lock (genreMemo) genreMemo[k] = g;
+            return g;
+        }
+
+        public static int StarsOf(string repo)
+        {
+            LoadData();
+            int s;
+            return !string.IsNullOrEmpty(repo) && stars.TryGetValue(repo, out s) ? s : 0;
+        }
+
         // Nome para comparar entre as fontes: sem parênteses, sem o " — autor" do allrecomps, só letras e números
         public static string TitleKey(string t)
         {

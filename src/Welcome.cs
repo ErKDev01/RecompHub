@@ -85,7 +85,7 @@ namespace C2Launcher
             sp.Children.Add(nameBox);
 
             // Pasta dos jogos
-            var box = new Border { BorderBrush = U.Solid(Color.FromArgb(28, 255, 255, 255)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(16, 12, 12, 12), Margin = new Thickness(0, 10, 0, 6) };
+            var box = new Border { BorderBrush = U.Solid(Ink(28)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(16, 12, 12, 12), Margin = new Thickness(0, 10, 0, 6) };
             var bd = new DockPanel();
             var pick = new Button { Style = U.S("GhostButton"), Content = "Trocar…", Padding = new Thickness(14, 7, 14, 7), FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
             DockPanel.SetDock(pick, Dock.Right);
@@ -151,12 +151,20 @@ namespace C2Launcher
             }));
         }
 
+        HubUpdate.Info pendingHubUpdate;   // guardado para reaparecer quando o hub é remontado (troca de paleta)
+
+        // Pílula compacta no topo, ao lado do perfil: "Hub 1.0.8 disponível  [Atualizar]  Novidades"
         void ShowHubUpdate(HubUpdate.Info info)
         {
-            var sp = new StackPanel();
-            sp.Children.Add(U.T("Nova versão do hub", 13, "Muted"));
-            sp.Children.Add(U.T(info.Tag, 16, "Text", FontWeights.SemiBold));
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+            pendingHubUpdate = info;
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            var dot = new System.Windows.Shapes.Ellipse { Width = 8, Height = 8, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+            dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "Brand");
+            sp.Children.Add(dot);
+            var lbl = U.T("Hub " + info.Tag + " disponível", 13, "Text", FontWeights.SemiBold);
+            lbl.VerticalAlignment = VerticalAlignment.Center;
+            sp.Children.Add(lbl);
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 0, 0, 0) };
             var upd = new Button { Style = U.S("PrimaryButton"), Content = "Atualizar", Padding = new Thickness(14, 6, 14, 6), FontSize = 13 };
             var notes = new Button { Style = U.S("LinkButton"), Content = "Novidades", FontSize = 13, Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
             notes.SetResourceReference(ForegroundProperty, "Muted");
@@ -181,10 +189,11 @@ namespace C2Launcher
             row.Children.Add(upd); row.Children.Add(notes);
             sp.Children.Add(row);
             hubUpdateBox.Child = sp;
-            hubUpdateBox.BorderBrush = U.Solid(Color.FromArgb(28, 255, 255, 255));
+            hubUpdateBox.BorderBrush = U.Solid(Ink(28));
             hubUpdateBox.BorderThickness = new Thickness(1);
-            hubUpdateBox.CornerRadius = new CornerRadius(8);
-            hubUpdateBox.Padding = new Thickness(14, 12, 14, 12);
+            hubUpdateBox.CornerRadius = new CornerRadius(22);
+            hubUpdateBox.Padding = new Thickness(14, 5, 6, 5);
+            hubUpdateBox.SetResourceReference(Border.BackgroundProperty, "Card");
             hubUpdateBox.Visibility = Visibility.Visible;
         }
     }

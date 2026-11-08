@@ -33,6 +33,11 @@ namespace C2Launcher
                 try { using (var wc = GitHub.Api()) json = await wc.DownloadStringTaskAsync("https://api.github.com/repos/" + Repo + "/releases/latest").ConfigureAwait(false); }
                 catch (System.Net.WebException) { }
             if (json == null) return await Task.Run(() => FromPage()).ConfigureAwait(false);
+            return Parse(json);
+        }
+
+        static Info Parse(string json)
+        {
             var d = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
             object o;
             string tag = d.TryGetValue("tag_name", out o) ? Convert.ToString(o) : "";
@@ -77,6 +82,16 @@ namespace C2Launcher
             if (info.AssetUrl == null || !Uri.TryCreate(info.AssetUrl, UriKind.Absolute, out src) || src.Scheme != Uri.UriSchemeHttps || !src.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
                 throw new Exception("a release não tem o RecompHub.exe anexado.");
             string exe = ExePath, tmp = exe + ".new", old = exe + ".old";
+            // Veio pela página pública (sem hash): tenta buscar o hash dessa versão na API antes de baixar
+            if (string.IsNullOrEmpty(info.Digest))
+                try
+                {
+                    string json;
+                    using (var wc = GitHub.Api()) json = await wc.DownloadStringTaskAsync("https://api.github.com/repos/" + Repo + "/releases/tags/" + Uri.EscapeDataString(info.Tag));
+                    var full = Parse(json);
+                    if (full != null && full.Tag == info.Tag && !string.IsNullOrEmpty(full.Digest)) info.Digest = full.Digest;
+                }
+                catch { }
             using (var wc = GitHub.Client())
             {
                 wc.DownloadProgressChanged += (s, e) => progress(e.TotalBytesToReceive > 0 ? (double)e.BytesReceived / e.TotalBytesToReceive : 0, "Baixando " + info.Tag + "…");
@@ -86,6 +101,14 @@ namespace C2Launcher
             {
                 try { File.Delete(tmp); } catch { }
                 throw new Exception("o arquivo baixado não confere com o publicado no GitHub.");
+            }
+            // Em qualquer caso, o arquivo tem que ser o próprio hub na versão anunciada (sem isso, não troca)
+            Version got = null;
+            try { got = AssemblyName.GetAssemblyName(tmp).Version; } catch { }
+            if (got == null || got.Major != info.Version.Major || got.Minor != info.Version.Minor || got.Build != Math.Max(0, info.Version.Build))
+            {
+                try { File.Delete(tmp); } catch { }
+                throw new Exception("o arquivo baixado não é o Recomp Hub " + info.Tag + ".");
             }
             if (File.Exists(old)) File.Delete(old);
             File.Move(exe, old);

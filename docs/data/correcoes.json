@@ -1,0 +1,15 @@
+{
+  "about": "Correções conhecidas lidas pelo Recomp Hub (src/Fixes.cs): se a configuração <key> do jogo <game> estiver <op> <value>, o hub avisa e oferece mudar para <set>.",
+  "fixes": [
+    {
+      "game": "eot",
+      "key": "eot_fps_limit",
+      "op": ">",
+      "value": "60",
+      "set": "60",
+      "title": "Portas e alavancas podem travar",
+      "detail": "Acima de 60 FPS, portas, alavancas e o botão de interagir param de funcionar (problema conhecido do port). A correção volta o limite para 60 FPS.",
+      "link": "https://github.com/goliathret/EdgeOfTimeRecomp/issues/11"
+    }
+  ]
+}

@@ -55,6 +55,13 @@ namespace C2Launcher
                 app.DispatcherUnhandledException += (s, e) => fail(e.Exception);
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => fail(e.ExceptionObject);
             }
+            else
+            {
+                // Uso normal: um travamento deixa o erro em crash.log (na pasta das configurações) para dar para investigar depois
+                Action<object> log = ex => { try { File.AppendAllText(System.IO.Path.Combine(HubPrefs.Folder, "crash.log"), DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + HubUpdate.CurrentLabel + "\r\n" + ex + "\r\n\r\n"); } catch { } };
+                app.DispatcherUnhandledException += (s, e) => log(e.Exception);
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => log(e.ExceptionObject);
+            }
             var w = new MainWindow(ip >= 0 && ip + 1 < args.Length ? args[ip + 1] : null);
             if (iv >= 0 && iv + 1 < args.Length) { string v = args[iv + 1]; w.Loaded += (s, e) => w.ShowViewByKey(v); }
             if (smokeLog != null)
@@ -68,6 +75,30 @@ namespace C2Launcher
                         await System.Threading.Tasks.Task.Delay(3000);   // dá tempo de montar a tela e das cargas em segundo plano terminarem
                     }
                     try { File.WriteAllText(smokeLog, "ok"); } catch { }
+                    Environment.Exit(0);
+                };
+            }
+            // --shot <pasta> [tela1,tela2…]: desenha cada tela num PNG (1400×900) fora da tela e fecha; capturas sem abrir nada na frente
+            int ish = Array.IndexOf(args, "--shot");
+            if (ish >= 0 && ish + 1 < args.Length)
+            {
+                string dir = args[ish + 1];
+                string[] views = ish + 2 < args.Length ? args[ish + 2].Split(',') : new[] { "home", "lib", "explore", "stats", "settings" };
+                Directory.CreateDirectory(dir);
+                w.ShowActivated = false; w.WindowStartupLocation = WindowStartupLocation.Manual; w.Left = -4000; w.Top = 0; w.Width = 1400; w.Height = 900;
+                w.Loaded += async (s, e) =>
+                {
+                    await System.Threading.Tasks.Task.Delay(4000);   // artes e novidades do cache
+                    foreach (var v in views)
+                    {
+                        w.SmokeStep(v);
+                        await System.Threading.Tasks.Task.Delay(3500);
+                        var el = (FrameworkElement)w.Content;
+                        var bmp = new RenderTargetBitmap((int)el.ActualWidth, (int)el.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+                        bmp.Render(el);
+                        var enc = new PngBitmapEncoder(); enc.Frames.Add(BitmapFrame.Create(bmp));
+                        using (var f = File.Create(System.IO.Path.Combine(dir, v.Replace(':', '_') + ".png"))) enc.Save(f);
+                    }
                     Environment.Exit(0);
                 };
             }
@@ -732,7 +763,7 @@ namespace C2Launcher
                 page = new GamePage(this, g);
                 page.Opacity = 0;
                 pageHost.Children.Add(page);
-                hub.Visibility = Visibility.Collapsed;
+                hub.Visibility = Visibility.Collapsed; SetChromeInk(false);
                 U.Fade(page, 1, 260, () => transition.Children.Clear());
                 page.FocusPlay();
                 if (autoPlay) page.PadStart();
@@ -760,7 +791,7 @@ namespace C2Launcher
             Ambience.Stop();
             var old = page;
             page = null;
-            hub.Visibility = Visibility.Visible;
+            hub.Visibility = Visibility.Visible; SetChromeInk(true);
             hub.IsHitTestVisible = true;
             Rescan();
             U.Fade(old, 0, 220, () => pageHost.Children.Remove(old));
@@ -999,6 +1030,11 @@ namespace C2Launcher
             Resources["Line"] = b(Color.FromArgb(40, 255, 255, 255)); Resources["Text"] = b(t.Text); Resources["Muted"] = b(t.Muted); Resources["Dim"] = b(t.Dim);
             Resources["Accent"] = b(t.Accent); Resources["AccentHi"] = b(t.AccentHi); Resources["AccentLo"] = b(t.AccentLo);
             Resources["OnAccent"] = b(t.OnAccent); Resources["Focus"] = b(t.Focus);
+            // Realces e marca padrão: a paleta do hub (que pode ser clara) não vale dentro da página do jogo
+            Func<byte, SolidColorBrush> w = a => b(Color.FromArgb(a, 255, 255, 255));
+            Resources["Wash"] = w(20); Resources["WashHi"] = w(38); Resources["WashLo"] = w(10); Resources["WashLine"] = w(42);
+            Resources["Track"] = w(51); Resources["Thumb"] = w(64); Resources["ThumbHi"] = w(128);
+            Resources["Brand"] = b(Color.FromRgb(0xE9, 0xA2, 0x3B)); Resources["NavOn"] = w(36); Resources["NavOnText"] = b(Colors.White);
             Resources["Radius"] = new CornerRadius(12);
             SetValue(TextElement.FontFamilyProperty, Fonts2.Hub);
             SetResourceReference(TextElement.ForegroundProperty, "Text");
@@ -1609,6 +1645,40 @@ namespace C2Launcher
         {
             overviewCards.Children.Clear();
             // Sem painéis na visão geral: imagens, conquistas e novidades ficam nas abas (a arte aparece inteira)
+            // A exceção são as correções conhecidas: problema que o jogo tem com a configuração atual, com o conserto a um clique
+            foreach (var fix in Fixes.For(g)) overviewCards.Children.Add(FixCard(fix));
+        }
+
+        FrameworkElement FixCard(KnownFix fix)
+        {
+            var sp = new StackPanel();
+            var top = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+            top.Children.Add(U.Icon(Ico.Alert, 18, "Warn"));
+            top.Children.Add(new TextBlock { Text = fix.Title, FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 270 });
+            sp.Children.Add(top);
+            var d = U.T(fix.Detail ?? "", 13, "Muted"); d.TextWrapping = TextWrapping.Wrap; d.LineHeight = 19;
+            sp.Children.Add(d);
+            var btns = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
+            var apply = new Button { Style = U.S("PrimaryButton"), Content = "Aplicar correção", Padding = new Thickness(14, 7, 14, 7), FontSize = 13, FontWeight = FontWeights.SemiBold };
+            apply.Click += (s, e) =>
+            {
+                if (playing || g.IsRunning()) { win.Toast("Feche o jogo antes de aplicar a correção.", true); return; }
+                try { fix.Apply(g); LoadSettings(); win.Toast("Correção aplicada"); RenderOverview(); }
+                catch (Exception ex) { win.Toast("Não deu para aplicar: " + ex.Message, true); }
+            };
+            btns.Children.Add(apply);
+            if (!string.IsNullOrEmpty(fix.Link))
+            {
+                var more = new Button { Style = U.S("LinkButton"), Content = "Saiba mais", FontSize = 13, Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                more.SetResourceReference(Control.ForegroundProperty, "Muted");
+                more.Click += (s, e) => U.OpenWeb(fix.Link);
+                btns.Children.Add(more);
+            }
+            sp.Children.Add(btns);
+            var b = new Border { Child = sp, Padding = new Thickness(16, 14, 16, 14), Margin = new Thickness(0, 0, 0, 10), BorderThickness = new Thickness(1), Background = U.Solid(Color.FromArgb(215, 14, 14, 16)) };
+            b.SetResourceReference(Border.BorderBrushProperty, "Warn");
+            b.SetResourceReference(Border.CornerRadiusProperty, "Radius");
+            return b;
         }
 
         FrameworkElement AchIcon(Achievement a, double size)
